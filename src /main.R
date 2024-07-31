@@ -7,6 +7,8 @@ library(sandwich)
 library(reshape2)
 library(plm)
 library(lmtest)
+library(zoo)
+library(urca)
 
 # Chemins des fichiers Excel
 path_excel_1 <- "data/fichier1.xlsx"
@@ -22,16 +24,78 @@ data_sp500 <- setDT(read_excel(path_excel_1, sheet = "Data_SP500_Weekly"))
 data_clim_index <- setDT(read_excel(path_excel_2, sheet = "Indices_Climatique"))
 data_sharesinfo <- setDT(read_excel(path_excel_2, sheet = "Information_SP500"))
 
+# Il n'y a pas de donnée sur la dernière ligne
+data_variables <- data_variables[-nrow(data_variables)]
+
 #----------------------------------------#
-#         MODÈLE AR(p) POUR CCAI         #
+#         Stationarité de CCAI           #
+#----------------------------------------#
+
+data_ccai <- copy(data_variables[,.(date,ccai)])
+data_ccai$date <- as.Date(data_ccai$date)
+
+# Création d'une série temporelle zoo
+zoo_ccai <- zoo(data_ccai$ccai, order.by = data_ccai$date)
+
+# Affichage de la série temporelle
+plot(zoo_ccai, main = "Série temporelle de ccai_diff_ar7_innovation (fréquence hebdomadaire)",
+     xlab = "Date", ylab = "ccai_diff_ar7_innovation")
+
+
+# Test de Dickey-Fuller augmenté (ADF)
+adf_test <- adf.test(zoo_ccai)
+print("Résultats du test de Dickey-Fuller augmenté (ADF) :")
+print(adf_test)
+
+# Test KPSS
+kpss_test <- ur.kpss(zoo_ccai)
+print("Résultats du test KPSS :")
+summary(kpss_test)
+
+# Les tests montrent des résultats contradictoires :
+# - Le test ADF indique que la série est stationnaire (p-value < 0.05).
+# - Le test KPSS indique que la série n'est pas stationnaire (valeur du test > valeurs critiques).
+
+# Différenciation de la série temporelle
+diff_zoo_ccai <- diff(zoo_ccai)
+
+# Suppression des valeurs NA résultant de la différenciation
+diff_zoo_ccai <- na.omit(diff_zoo_ccai)
+
+# Test de stationnarité sur la série différenciée
+
+# Test de Dickey-Fuller augmenté (ADF) sur la série différenciée
+adf_test_diff <- adf.test(diff_zoo_ccai)
+print("Résultats du test de Dickey-Fuller augmenté (ADF) sur la série différenciée :")
+print(adf_test_diff)
+
+# Test KPSS sur la série différenciée
+kpss_test_diff <- ur.kpss(diff_zoo_ccai, type = "mu")
+print("Résultats du test KPSS sur la série différenciée :")
+summary(kpss_test_diff)
+
+# Les deux tests (ADF et KPSS) sur la série différenciée indiquent que la série différenciée est stationnaire.
+
+plot(diff_zoo_ccai, main = "Série temporelle de ccai_diff (fréquence hebdomadaire)",
+     xlab = "Date", ylab = "ccai_diff_ar7_innovation")
+
+# Ajout de la série statio ccai_diff
+
+# On supprime la première ligne 
+data_variables <- data_variables[2:nrow(data_variables)]
+data_variables$ccai_diff <- diff_zoo_ccai
+
+
+#----------------------------------------#
+#       MODÈLE AR(p) POUR ccai_diff      #
 #----------------------------------------#
 
 # Série temporelle pour CCAI
-ts_ccai <- ts(data_variables$ccai, frequency = 1)
+ts_ccai_diff <- ts(data_variables$ccai_diff, frequency = 1)
 
 # Sélection du lag optimal basé sur l'AIC
 max_lag <- 20  
-aic_values <- sapply(1:max_lag, function(p) AIC(arima(ts_ccai, order = c(p, 0, 0))))
+aic_values <- sapply(1:max_lag, function(p) AIC(arima(ts_ccai_diff, order = c(p, 0, 0))))
 optimal_lag <- which.min(aic_values)
 cat("Lag optimal (AIC) pour un modèle AR :", optimal_lag, "\n")
 
@@ -41,10 +105,22 @@ points(optimal_lag, aic_values[optimal_lag], col = "red", pch = 19)
 text(optimal_lag, aic_values[optimal_lag], labels = paste("Optimal Lag:", optimal_lag), pos = 3, col = "red")
 
 # Modèle AR(7) et résidus
-model <- arima(ts_ccai, order = c(7, 0, 0))
+model <- arima(ts_ccai_diff, order = c(7, 0, 0))
 residuals <- residuals(model)
 print(residuals)
 plot(residuals, type = "l", col = "blue", xlab = "Time", ylab = "Residuals", main = "Residuals of AR(p) Model")
+
+# Test de Dickey-Fuller augmenté (ADF)
+adf_test <- adf.test(residuals)
+print("Résultats du test de Dickey-Fuller augmenté (ADF) :")
+print(adf_test)
+
+# Test KPSS
+kpss_test <- ur.kpss(residuals)
+print("Résultats du test KPSS :")
+summary(kpss_test)
+
+# La série des résidus est stationnaire.
 
 #----------------------------------------#
 #        PRÉPARATION DU PANEL            #
@@ -56,8 +132,8 @@ Tt = nrow(data_variables)
 
 # Copie et modification des données pour le panel
 X <- copy(data_variables[,.(date,rf_3_weekly,mkt_rf_3_weekly,smb_3_weekly,hml_3_weekly,
-                            rmw_5_friday,cma_5_friday,ccai)])
-X[, ccai_ar7_innovation := residuals]
+                            rmw_5_friday,cma_5_friday,ccai,ccai_diff)])
+X[, ccai_diff_ar7_innovation := residuals]
 
 # Réplication des données pour chaque ticket
 X_panel <- do.call(rbind, replicate(nbr_tickets, X, simplify = FALSE))
@@ -66,7 +142,7 @@ X_panel <- do.call(rbind, replicate(nbr_tickets, X, simplify = FALSE))
 X_panel <- cbind(X_panel, data_sp500[,.(ticker,r_stock,Sector,IndustryGroup,Industry,SubIndustry)])
 X_panel$r_rf <- X_panel[,.(r_stock-rf_3_weekly)]
 X_panel <- X_panel[,.(date,ticker,r_rf,mkt_rf_3_weekly,smb_3_weekly,hml_3_weekly,
-                      rmw_5_friday,cma_5_friday,ccai,ccai_ar7_innovation,Sector,
+                      rmw_5_friday,cma_5_friday,ccai,ccai_diff,ccai_diff_ar7_innovation,Sector,
                       IndustryGroup,Industry,SubIndustry)]
 
 print(X_panel)
@@ -80,7 +156,7 @@ pdata <- pdata.frame(X_panel, index = c("ticker", "date"))
 
 # Modèle avec effets fixes individuels
 model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-               rmw_5_friday + cma_5_friday + ccai_ar7_innovation,
+               rmw_5_friday + cma_5_friday + ccai_diff_ar7_innovation,
              data = pdata, model = "within")
 
 # Résultats avec correction de Driscroll and Kraay
@@ -90,7 +166,7 @@ summary(model)
 # Modèle GLM avec effets fixes
 X_panel$ticker <- factor(X_panel$ticker)
 model_glm <- glm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-                   rmw_5_friday + cma_5_friday + ccai_ar7_innovation,
+                   rmw_5_friday + cma_5_friday + ccai_diff_ar7_innovation,
                  data = X_panel)
 robust_se_glm <- vcovHC(model_glm, type = "HC1")
 coeftest(model_glm, vcov = robust_se_glm)
@@ -103,14 +179,17 @@ summary(model_glm)
 unique_sector <- unique(data_sharesinfo$Sector)
 results_by_sector <- list()
 models_by_sector <- list()
-predictor <- "ccai_ar7_innovation"
+
+# Construction dynamique de la formule
+predictor <- "ccai_diff_ar7_innovation"
+formula_str <- paste("r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + rmw_5_friday + cma_5_friday +",
+                     predictor)
+formula <- as.formula(formula_str)
 
 # Boucle pour chaque secteur
 for (sector in unique_sector) {
   pdata_temp <- pdata.frame(X_panel[Sector == sector], index = c("ticker", "date"))
-  
-  model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-                 rmw_5_friday + cma_5_friday + ccai_ar7_innovation,
+  model <- plm(formula,
                data = pdata_temp, model = "within")
   
   coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
@@ -159,11 +238,13 @@ ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
 results_by_sector <- list()
 models_by_sector <- list()
 
+formula_str <- paste("r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + rmw_5_friday + cma_5_friday +", predictor)
+formula <- as.formula(formula_str)
+
 for (sector in unique_sector) {
   data_temp <- X_panel[X_panel$Sector == sector, ]
   
-  model <- glm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-                 rmw_5_friday + cma_5_friday + ccai_ar7_innovation,
+  model <- glm(formula,
                data = data_temp)
   
   robust_se_glm <- vcovHC(model, type = "HC1")
@@ -221,8 +302,7 @@ models_by_industry <- list()
 for (industry in unique_industrygroup) {
   pdata_temp <- pdata.frame(X_panel[IndustryGroup == industry], index = c("ticker", "date"))
   
-  model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-                 rmw_5_friday + cma_5_friday + ccai_ar7_innovation,
+  model <- plm(formula,
                data = pdata_temp, model = "within")
   
   coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
@@ -270,8 +350,7 @@ models_by_industry <- list()
 for (industry in unique_industrygroup) {
   data_temp <- X_panel[X_panel$IndustryGroup == industry, ]
   
-  model <- glm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-                 rmw_5_friday + cma_5_friday + ccai_ar7_innovation,
+  model <- glm(formula,
                data = data_temp)
   
   robust_se_glm <- vcovHC(model, type = "HC1")
@@ -326,14 +405,14 @@ ggplot(results_df, aes(x = Industrie, y = Coefficient, fill = Pvalue <= 0.1)) +
 # Initialisation des listes pour stocker les résultats
 results_by_sector_and_period <- list()
 models_by_sector_and_period <- list()
-predictor <- "ccai_ar7_innovation"  # Nom du prédicteur principal
+predictor <- "ccai_diff_ar7_innovation"  # Nom du prédicteur principal
 
 # Définition des différentes plages temporelles de 5 ans
 time_periods <- list(
   period1 = c("2008-03-07", "2013-03-06"),
   period2 = c("2013-03-07", "2018-03-06"),
   period3 = c("2018-03-07", "2023-03-06"),
-  period4 = c("2023-03-07", "2024-03-01")
+  period4 = c("2023-03-07", "2024-02-23")
 )
 
 # Initialisation des vecteurs pour stocker les résultats
@@ -356,8 +435,7 @@ for (sector in unique_sector) {
     
     if (nrow(pdata_temp_period) > 0) {
       # Ajuster le modèle de régression pour la période actuelle
-      model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-                     rmw_5_friday + cma_5_friday + ccai_ar7_innovation,
+      model <- plm(formula,
                    data = pdata_temp_period, model = "within")
       
       # Tester les coefficients avec une covariance robuste
@@ -441,10 +519,10 @@ for (sector in unique_sector) {
   pdata_temp <- pdata.frame(X_panel[X_panel$Sector == sector], index = c("ticker", "date"))
   
   # Ajuster les modèles à 3 et 5 facteurs
-  model_3f <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + ccai_ar7_innovation,
+  model_3f <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + ccai_diff_ar7_innovation,
                   data = pdata_temp, model = "within")
   
-  model_5f <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + rmw_5_friday + cma_5_friday + ccai_ar7_innovation,
+  model_5f <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + rmw_5_friday + cma_5_friday + ccai_diff_ar7_innovation,
                   data = pdata_temp, model = "within")
   
   # Tester les coefficients avec une covariance robuste
@@ -517,3 +595,22 @@ ggplot(results_comparison_melted, aes(x = Secteur, y = Coefficient, fill = Signi
     legend.title = element_text(size = 12),
     legend.text = element_text(size = 12)
   )
+
+
+
+#----------------------------------------#
+#          Détection de break            #
+#----------------------------------------#
+
+library(zoo)
+
+X_temp <- copy(X[-nrow(X),.(date,ccai_diff_ar7_innovation)])
+X_temp$date <- as.Date(X_temp$date)
+
+# Création d'une série temporelle zoo
+zoo_ccaiar7 <- zoo(X_temp$ccai_diff_ar7_innovation, order.by = X_temp$date)
+
+# Affichage de la série temporelle
+plot(zoo_ccaiar7, main = "Série temporelle de ccai_diff_ar7_innovation (fréquence hebdomadaire)",
+     xlab = "Date", ylab = "ccai_diff_ar7_innovation")
+
