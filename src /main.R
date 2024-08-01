@@ -107,7 +107,7 @@ text(optimal_lag, aic_values[optimal_lag], labels = paste("Optimal Lag:",
                                                           optimal_lag), pos = 3, col = "red")
 
 # Modèle AR(7) et résidus
-model <- arima(ts_ccai_diff, order = c(1, 0, 0))
+model <- arima(ts_ccai_diff, order = c(2, 0, 0))
 residuals <- residuals(model)
 print(residuals)
 plot(residuals, type = "l", col = "blue", xlab = "Time", ylab = "Residuals",
@@ -139,7 +139,7 @@ nbr_tickets <- nrow(data_sharesinfo)
 Tt <- nrow(data_variables)
 
 data_temp <- copy(data_sp500[, .(ticker,date, r_stock, Sector, IndustryGroup, Industry, SubIndustry)])
-rm(data_temp)
+
 
 X_panel <- merge(data_temp, data_variables[,.(date, rf_3_weekly, mkt_rf_3_weekly, smb_3_weekly, hml_3_weekly,
                                       rmw_5_friday, cma_5_friday, ccai, ccai_diff,ccai_diff_ar_innovation)],
@@ -163,7 +163,7 @@ pdata <- pdata.frame(X_panel, index = c("ticker", "date"))
 # Modèle avec effets fixes individuels
 model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
                rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation,
-             data = pdata, model = "within")
+             data = pdata, model = "within", effect = "individual")
 
 # Résultats avec correction de Driscroll and Kraay
 coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
@@ -197,7 +197,7 @@ formula <- as.formula(formula_str)
 for (sector in unique_sector) {
   pdata_temp <- pdata.frame(X_panel[Sector == sector], index = c("ticker", "date"))
   model <- plm(formula,
-               data = pdata_temp, model = "within")
+               data = pdata_temp, model = "within",effect = "individual")
   
   coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
   models_by_sector[[sector]] <- coef_test
@@ -311,7 +311,7 @@ for (industry in unique_industrygroup) {
   pdata_temp <- pdata.frame(X_panel[IndustryGroup == industry], index = c("ticker", "date"))
   
   model <- plm(formula,
-               data = pdata_temp, model = "within")
+               data = pdata_temp, model = "within",effect = "individual")
   
   coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
   models_by_industry[[industry]] <- coef_test
@@ -421,7 +421,7 @@ for (subindustry in unique_subindustry) {
   pdata_temp <- pdata.frame(X_panel[SubIndustry == subindustry], index = c("ticker", "date"))
   
   model <- plm(formula,
-               data = pdata_temp, model = "within")
+               data = pdata_temp, model = "within",effect = "individual")
   
   coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
   models_by_industry[[subindustry]] <- coef_test
@@ -575,7 +575,7 @@ for (sector in unique_sector) {
     if (nrow(pdata_temp_period) > 0) {
       # Ajuster le modèle de régression pour la période actuelle
       model <- plm(formula,
-                   data = pdata_temp_period, model = "within")
+                   data = pdata_temp_period, model = "within",effect = "individual")
       
       # Tester les coefficients avec une covariance robuste
       coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
@@ -662,10 +662,10 @@ for (sector in unique_sector) {
   
   # Ajuster les modèles à 3 et 5 facteurs
   model_3f <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + ccai_diff_ar_innovation,
-                  data = pdata_temp, model = "within")
+                  data = pdata_temp, model = "within",effect = "individual")
   
   model_5f <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation,
-                  data = pdata_temp, model = "within")
+                  data = pdata_temp, model = "within",effect = "individual")
   
   # Tester les coefficients avec une covariance robuste
   coef_test_3f <- coeftest(model_3f, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
