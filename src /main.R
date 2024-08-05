@@ -225,14 +225,14 @@ coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
 summary(model)
 
 
-# Modèle GLM avec effets fixes
-X_panel$ticker <- factor(X_panel$ticker)
-model_glm <- glm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-                   rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation + ticker,
-                 data = X_panel)
-robust_se_glm <- vcovHC(model_glm, type = "HC1")
-coeftest(model_glm, vcov = robust_se_glm)
-summary(model_glm)
+# # Modèle GLM avec effets fixes
+# X_panel$ticker <- factor(X_panel$ticker)
+# model_glm <- glm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+#                    rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation + ticker,
+#                  data = X_panel)
+# robust_se_glm <- vcovHC(model_glm, type = "HC1")
+# coeftest(model_glm, vcov = robust_se_glm)
+# summary(model_glm)
 
 
 #----------------------------------------------#
@@ -410,64 +410,64 @@ ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
     legend.text = element_text(size = 12)
   )
 
-### GLM ###
-
-# Modèles GLM par secteur
-results_by_sector <- list()
-models_by_sector <- list()
-
-formula_str <- paste("r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + rmw_5_friday + cma_5_friday +",
-                     predictor)
-formula <- as.formula(formula_str)
-
-for (sector in unique_sector) {
-  data_temp <- X_panel[X_panel$Sector == sector, ]
-  
-  model <- glm(formula,
-               data = data_temp)
-  
-  robust_se_glm <- vcovHC(model, type = "HC1")
-  coef_test <- coeftest(model, vcov = robust_se_glm)
-  
-  if (predictor %in% rownames(coef_test)) {
-    coefficients <- coef_test[rownames(coef_test) == predictor, "Estimate"]
-    p_values <- coef_test[rownames(coef_test) == predictor, "Pr(>|z|)"]
-  } else {
-    coefficients <- NA
-    p_values <- NA
-  }
-  
-  results_by_sector[[sector]] <- list(coefficients = coefficients, p_values = p_values)
-}
-
-results_df <- data.frame(
-  Secteur = unique_sector,
-  Valeur = predictor,
-  Coefficient = sapply(results_by_sector, function(x) x$coefficients),
-  Pvalue = sapply(results_by_sector, function(x) x$p_values)
-)
-
-ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
-  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
-  scale_fill_manual(values = c("grey70", "steelblue"), 
-                    labels = c("P-value > 0.1", "P-value <= 0.1"),
-                    name = "Significance") +
-  labs(x = "Secteur", 
-       y = "Coefficient estimé",
-       title = "Coefficients des Modèles GLM par Secteur",
-       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
-  theme_minimal(base_size = 14) +
-  theme(
-    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
-    plot.subtitle = element_text(hjust = 0.5, size = 12),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
-    axis.text.y = element_text(size = 12),
-    axis.title.x = element_text(size = 14, face = "bold"),
-    axis.title.y = element_text(size = 14, face = "bold"),
-    legend.position = "top",
-    legend.title = element_text(size = 12),
-    legend.text = element_text(size = 12)
-  )
+# ### GLM ###
+# 
+# # Modèles GLM par secteur
+# results_by_sector <- list()
+# models_by_sector <- list()
+# 
+# formula_str <- paste("r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + rmw_5_friday + cma_5_friday +",
+#                      predictor)
+# formula <- as.formula(formula_str)
+# 
+# for (sector in unique_sector) {
+#   data_temp <- X_panel[X_panel$Sector == sector, ]
+# 
+#   model <- glm(formula,
+#                data = data_temp)
+# 
+#   robust_se_glm <- vcovHC(model, type = "HC1")
+#   coef_test <- coeftest(model, vcov = robust_se_glm)
+# 
+#   if (predictor %in% rownames(coef_test)) {
+#     coefficients <- coef_test[rownames(coef_test) == predictor, "Estimate"]
+#     p_values <- coef_test[rownames(coef_test) == predictor, "Pr(>|z|)"]
+#   } else {
+#     coefficients <- NA
+#     p_values <- NA
+#   }
+# 
+#   results_by_sector[[sector]] <- list(coefficients = coefficients, p_values = p_values)
+# }
+# 
+# results_df <- data.frame(
+#   Secteur = unique_sector,
+#   Valeur = predictor,
+#   Coefficient = sapply(results_by_sector, function(x) x$coefficients),
+#   Pvalue = sapply(results_by_sector, function(x) x$p_values)
+# )
+# 
+# ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
+#   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+#   scale_fill_manual(values = c("grey70", "steelblue"),
+#                     labels = c("P-value > 0.1", "P-value <= 0.1"),
+#                     name = "Significance") +
+#   labs(x = "Secteur",
+#        y = "Coefficient estimé",
+#        title = "Coefficients des Modèles GLM par Secteur",
+#        subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+#   theme_minimal(base_size = 14) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+#     plot.subtitle = element_text(hjust = 0.5, size = 12),
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+#     axis.text.y = element_text(size = 12),
+#     axis.title.x = element_text(size = 14, face = "bold"),
+#     axis.title.y = element_text(size = 14, face = "bold"),
+#     legend.position = "top",
+#     legend.title = element_text(size = 12),
+#     legend.text = element_text(size = 12)
+#   )
 
 
 #----------------------------------------#
@@ -605,59 +605,59 @@ ggplot(results_df, aes(x = Industrie, y = Coefficient, fill = Pvalue <= 0.1)) +
     legend.text = element_text(size = 12)
   )
 
-# Modèles GLM par groupe d'industrie
-results_by_industry <- list()
-models_by_industry <- list()
-
-for (industry in unique_industrygroup) {
-  data_temp <- X_panel[X_panel$IndustryGroup == industry, ]
-  
-  model <- glm(formula,
-               data = data_temp)
-  
-  robust_se_glm <- vcovHC(model, type = "HC1")
-  coef_test <- coeftest(model, vcov = robust_se_glm)
-  
-  if (predictor %in% rownames(coef_test)) {
-    coefficients <- coef_test[rownames(coef_test) == predictor, "Estimate"]
-    p_values <- coef_test[rownames(coef_test) == predictor, "Pr(>|z|)"]
-  } else {
-    coefficients <- NA
-    p_values <- NA
-  }
-  
-  results_by_industry[[industry]] <- list(coefficients = coefficients, p_values = p_values)
-}
-
-results_df <- data.frame(
-  Industrie = unique_industrygroup,
-  Valeur = predictor,
-  Coefficient = sapply(results_by_industry, function(x) x$coefficients),
-  Pvalue = sapply(results_by_industry, function(x) x$p_values)
-)
-
-ggplot(results_df, aes(x = Industrie, y = Coefficient, fill = Pvalue <= 0.1)) +
-  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
-  scale_fill_manual(values = c("grey70", "steelblue"), 
-                    labels = c("P-value > 0.1", "P-value <= 0.1"),
-                    name = "Significance") +
-  labs(x = "Secteur", 
-       y = "Coefficient estimé",
-       title = "Coefficients des Modèles GLM par Industrie",
-       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
-  theme_minimal(base_size = 14) +
-  theme(
-    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
-    plot.subtitle = element_text(hjust = 0.5, size = 12),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
-    axis.text.y = element_text(size = 12),
-    axis.title.x = element_text(size = 14, face = "bold"),
-    axis.title.y = element_text(size = 14, face = "bold"),
-    legend.position = "top",
-    legend.title = element_text(size = 12),
-    legend.text = element_text(size = 12)
-  )
-
+# # Modèles GLM par groupe d'industrie
+# results_by_industry <- list()
+# models_by_industry <- list()
+# 
+# for (industry in unique_industrygroup) {
+#   data_temp <- X_panel[X_panel$IndustryGroup == industry, ]
+#   
+#   model <- glm(formula,
+#                data = data_temp)
+#   
+#   robust_se_glm <- vcovHC(model, type = "HC1")
+#   coef_test <- coeftest(model, vcov = robust_se_glm)
+#   
+#   if (predictor %in% rownames(coef_test)) {
+#     coefficients <- coef_test[rownames(coef_test) == predictor, "Estimate"]
+#     p_values <- coef_test[rownames(coef_test) == predictor, "Pr(>|z|)"]
+#   } else {
+#     coefficients <- NA
+#     p_values <- NA
+#   }
+#   
+#   results_by_industry[[industry]] <- list(coefficients = coefficients, p_values = p_values)
+# }
+# 
+# results_df <- data.frame(
+#   Industrie = unique_industrygroup,
+#   Valeur = predictor,
+#   Coefficient = sapply(results_by_industry, function(x) x$coefficients),
+#   Pvalue = sapply(results_by_industry, function(x) x$p_values)
+# )
+# 
+# ggplot(results_df, aes(x = Industrie, y = Coefficient, fill = Pvalue <= 0.1)) +
+#   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+#   scale_fill_manual(values = c("grey70", "steelblue"), 
+#                     labels = c("P-value > 0.1", "P-value <= 0.1"),
+#                     name = "Significance") +
+#   labs(x = "Secteur", 
+#        y = "Coefficient estimé",
+#        title = "Coefficients des Modèles GLM par Industrie",
+#        subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+#   theme_minimal(base_size = 14) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+#     plot.subtitle = element_text(hjust = 0.5, size = 12),
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+#     axis.text.y = element_text(size = 12),
+#     axis.title.x = element_text(size = 14, face = "bold"),
+#     axis.title.y = element_text(size = 14, face = "bold"),
+#     legend.position = "top",
+#     legend.title = element_text(size = 12),
+#     legend.text = element_text(size = 12)
+#   )
+# 
 
 
 
@@ -715,76 +715,76 @@ ggplot(results_df, aes(x = SubIndustry, y = Coefficient, fill = Pvalue <= 0.1)) 
     legend.text = element_text(size = 12)
   )
 
-# Modèles GLM par groupe d'industrie
-results_by_subindustry <- list()
-models_by_subindustry <- list()
-
-for (subindustry in unique_subindustry) {
-  data_temp <- X_panel[X_panel$SubIndustry == subindustry, ]
-  
-  # Vérification des données pour chaque sous-industrie
-  if (nrow(data_temp) < 50 || all(data_temp[[predictor]] == data_temp[[predictor]][1])) {
-    cat("Sous-industrie", subindustry, ": Pas assez de données ou pas de variabilité\n")
-    coefficients <- NA
-    p_values <- NA
-  } else {
-    model <- tryCatch({
-      glm(formula, data = data_temp)
-    }, error = function(e) {
-      cat("Erreur de convergence pour la sous-industrie", subindustry, "\n")
-      return(NULL)
-    })
-    
-    if (is.null(model)) {
-      coefficients <- NA
-      p_values <- NA
-    } else {
-      robust_se_glm <- vcovHC(model, type = "HC1")
-      coef_test <- coeftest(model, vcov = robust_se_glm)
-      
-      if (predictor %in% rownames(coef_test)) {
-        coefficients <- coef_test[rownames(coef_test) == predictor, "Estimate"]
-        p_values <- coef_test[rownames(coef_test) == predictor, "Pr(>|z|)"]
-      } else {
-        coefficients <- NA
-        p_values <- NA
-      }
-    }
-  }
-  
-  results_by_subindustry[[subindustry]] <- list(coefficients = coefficients, p_values = p_values)
-}
-
-results_df <- data.frame(
-  SubIndustry = unique_subindustry,
-  Valeur = predictor,
-  Coefficient = sapply(results_by_subindustry, function(x) x$coefficients),
-  Pvalue = sapply(results_by_subindustry, function(x) x$p_values)
-)
-
-
-ggplot(results_df, aes(x = SubIndustry, y = Coefficient, fill = Pvalue <= 0.1)) +
-  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
-  scale_fill_manual(values = c("grey70", "steelblue"), 
-                    labels = c("P-value > 0.1", "P-value <= 0.1"),
-                    name = "Significance") +
-  labs(x = "Secteur", 
-       y = "Coefficient estimé",
-       title = "Coefficients des Modèles GLM par Industrie",
-       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
-  theme_minimal(base_size = 14) +
-  theme(
-    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
-    plot.subtitle = element_text(hjust = 0.5, size = 12),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
-    axis.text.y = element_text(size = 12),
-    axis.title.x = element_text(size = 14, face = "bold"),
-    axis.title.y = element_text(size = 14, face = "bold"),
-    legend.position = "top",
-    legend.title = element_text(size = 12),
-    legend.text = element_text(size = 12)
-  )
-
+# # Modèles GLM par groupe d'industrie
+# results_by_subindustry <- list()
+# models_by_subindustry <- list()
+# 
+# for (subindustry in unique_subindustry) {
+#   data_temp <- X_panel[X_panel$SubIndustry == subindustry, ]
+#   
+#   # Vérification des données pour chaque sous-industrie
+#   if (nrow(data_temp) < 50 || all(data_temp[[predictor]] == data_temp[[predictor]][1])) {
+#     cat("Sous-industrie", subindustry, ": Pas assez de données ou pas de variabilité\n")
+#     coefficients <- NA
+#     p_values <- NA
+#   } else {
+#     model <- tryCatch({
+#       glm(formula, data = data_temp)
+#     }, error = function(e) {
+#       cat("Erreur de convergence pour la sous-industrie", subindustry, "\n")
+#       return(NULL)
+#     })
+#     
+#     if (is.null(model)) {
+#       coefficients <- NA
+#       p_values <- NA
+#     } else {
+#       robust_se_glm <- vcovHC(model, type = "HC1")
+#       coef_test <- coeftest(model, vcov = robust_se_glm)
+#       
+#       if (predictor %in% rownames(coef_test)) {
+#         coefficients <- coef_test[rownames(coef_test) == predictor, "Estimate"]
+#         p_values <- coef_test[rownames(coef_test) == predictor, "Pr(>|z|)"]
+#       } else {
+#         coefficients <- NA
+#         p_values <- NA
+#       }
+#     }
+#   }
+#   
+#   results_by_subindustry[[subindustry]] <- list(coefficients = coefficients, p_values = p_values)
+# }
+# 
+# results_df <- data.frame(
+#   SubIndustry = unique_subindustry,
+#   Valeur = predictor,
+#   Coefficient = sapply(results_by_subindustry, function(x) x$coefficients),
+#   Pvalue = sapply(results_by_subindustry, function(x) x$p_values)
+# )
+# 
+# 
+# ggplot(results_df, aes(x = SubIndustry, y = Coefficient, fill = Pvalue <= 0.1)) +
+#   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+#   scale_fill_manual(values = c("grey70", "steelblue"), 
+#                     labels = c("P-value > 0.1", "P-value <= 0.1"),
+#                     name = "Significance") +
+#   labs(x = "Secteur", 
+#        y = "Coefficient estimé",
+#        title = "Coefficients des Modèles GLM par Industrie",
+#        subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+#   theme_minimal(base_size = 14) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+#     plot.subtitle = element_text(hjust = 0.5, size = 12),
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+#     axis.text.y = element_text(size = 12),
+#     axis.title.x = element_text(size = 14, face = "bold"),
+#     axis.title.y = element_text(size = 14, face = "bold"),
+#     legend.position = "top",
+#     legend.title = element_text(size = 12),
+#     legend.text = element_text(size = 12)
+#   )
+# 
 
 #----------------------------------------#
 #      ROBUSTESSE DES APPROCHES          #
