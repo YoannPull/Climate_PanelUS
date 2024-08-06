@@ -163,15 +163,15 @@ X_panel <- cbind(X_panel[, .(ticker,date, r_rf, mkt_rf_3_weekly, smb_3_weekly, h
 # Ajout des CCAI*Dummies_Sector
 X_panel[, `:=`(
   ccai_SectorConsumer.Discretionary = ccai_diff_ar_innovation * `SectorConsumer Discretionary`,
-  ccai_SectorConsumer.Staples = ccai_diff_ar_innovation * `SectorConsumer Staples`,
-  ccai_SectorEnergy = ccai_diff_ar_innovation * `SectorEnergy`,
-  ccai_SectorFinancials = ccai_diff_ar_innovation * `SectorFinancials`,
-  ccai_SectorHealth.Care = ccai_diff_ar_innovation * `SectorHealth Care`,
-  ccai_SectorIndustrials = ccai_diff_ar_innovation * `SectorIndustrials`,
+  ccai_SectorConsumer.Staples       = ccai_diff_ar_innovation * `SectorConsumer Staples`,
+  ccai_SectorEnergy                 = ccai_diff_ar_innovation * `SectorEnergy`,
+  ccai_SectorFinancials             = ccai_diff_ar_innovation * `SectorFinancials`,
+  ccai_SectorHealth.Care            = ccai_diff_ar_innovation * `SectorHealth Care`,
+  ccai_SectorIndustrials            = ccai_diff_ar_innovation * `SectorIndustrials`,
   ccai_SectorInformation.Technology = ccai_diff_ar_innovation * `SectorInformation Technology`,
-  ccai_SectorMaterials = ccai_diff_ar_innovation * `SectorMaterials`,
-  ccai_SectorReal.Estate = ccai_diff_ar_innovation * `SectorReal Estate`,
-  ccai_SectorUtilities = ccai_diff_ar_innovation * `SectorUtilities`
+  ccai_SectorMaterials              = ccai_diff_ar_innovation * `SectorMaterials`,
+  ccai_SectorReal.Estate            = ccai_diff_ar_innovation * `SectorReal Estate`,
+  ccai_SectorUtilities              = ccai_diff_ar_innovation * `SectorUtilities`
 )]
 
 # Date des accords de Paris
@@ -190,6 +190,18 @@ X_panel[, `:=`(
   post_PA_ccai_diff_ar_innovation = post_PA * ccai_diff_ar_innovation
 )]
 
+X_panel[, `:=`(
+post_PA_ccai_SectorConsumer.Discretionary = post_PA*ccai_SectorConsumer.Discretionary,
+post_PA_ccai_SectorConsumer.Staples       = post_PA*ccai_SectorConsumer.Staples,
+post_PA_ccai_SectorEnergy                 = post_PA*ccai_SectorEnergy ,
+post_PA_ccai_SectorFinancials             = post_PA*ccai_SectorFinancials,
+post_PA_ccai_SectorHealth.Care            = post_PA*ccai_SectorHealth.Care,
+post_PA_ccai_SectorIndustrials            = post_PA*ccai_SectorIndustrials,
+post_PA_ccai_SectorInformation.Technology = post_PA*ccai_SectorInformation.Technology,
+post_PA_ccai_SectorMaterials              = post_PA*ccai_SectorMaterials,
+post_PA_ccai_SectorReal.Estate            = post_PA*ccai_SectorReal.Estate,
+post_PA_ccai_SectorUtilities              = post_PA*ccai_SectorUtilities
+)]
 
 #----------------------------------------#
 #     Regression sur le Panel Global     #
@@ -205,7 +217,7 @@ model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly +
 
 coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
 
-# Modèle avec effets fixes individuels et sectoriel
+# Modèle avec effets fixes individuels et sectoriels
 model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
                rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation +
                SectorConsumer.Discretionary + SectorConsumer.Staples + 
@@ -215,8 +227,13 @@ model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly +
              data = pdata, model = "within", effect = "individual")
 
 # Résultats avec correction de Driscroll and Kraay
-coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
+coef_test <- coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
+coef_test
 # summary(model)
+
+# Enregistrement des résultats
+save(coef_test, file = "figures/estimation/res_pan_glob.RData")
+
 
 ## Il semblerait que les effets fixes capturent déjà la variation dans les données.
 
@@ -234,6 +251,88 @@ summary(model)
 # coeftest(model_glm, vcov = robust_se_glm)
 # summary(model_glm)
 
+
+#----------------------------------------#
+#   PANEL PARIS AGREEMENT PAR SECTOR     #
+#----------------------------------------#
+
+# Extraire les secteurs uniques
+unique_sector <- unique(pdata$Sector)
+
+# Initialiser les listes pour stocker les résultats
+results_by_sector <- list()
+models_by_sector <- list()
+
+# Formuler le modèle
+model_formula <- r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+  rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation +
+  post_PA_mkt_rf_3_weekly + post_PA_smb_3_weekly + post_PA_hml_3_weekly +
+  post_PA_rmw_5_friday + post_PA_cma_5_friday + post_PA_ccai_diff_ar_innovation
+
+# Boucle pour chaque secteur
+for (sector in unique_sector) {
+  # Filtrer les données pour le secteur actuel
+  pdata_temp <- pdata[pdata$Sector == sector,]
+  
+  # Ajuster le modèle avec effets fixes individuels
+  model <- plm(model_formula, data = pdata_temp, model = "within", effect = "individual")
+  
+  # Obtenir les résultats des tests des coefficients
+  coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
+  
+  # Stocker les résultats dans les listes
+  models_by_sector[[sector]] <- coef_test
+  
+  # Extraire les coefficients avant et après les accords de Paris
+  coefficients_before <- coef_test["ccai_diff_ar_innovation", "Estimate"]
+  coefficients_after <- coef_test["post_PA_ccai_diff_ar_innovation", "Estimate"]
+  p_values_before <- coef_test["ccai_diff_ar_innovation", "Pr(>|t|)"]
+  p_values_after <- coef_test["post_PA_ccai_diff_ar_innovation", "Pr(>|t|)"]
+  
+  results_by_sector[[sector]] <- list(
+    coefficients_before = coefficients_before,
+    coefficients_after = coefficients_after,
+    p_values_before = p_values_before,
+    p_values_after = p_values_after
+  )
+}
+
+# Créer un data frame avec les résultats
+results_df <- data.frame(
+  Secteur = rep(unique_sector, each = 2),
+  Period = rep(c("Before PA", "After PA"), times = length(unique_sector)),
+  Coefficient = unlist(lapply(results_by_sector, function(x) c(x$coefficients_before, x$coefficients_after))),
+  Pvalue = unlist(lapply(results_by_sector, function(x) c(x$p_values_before, x$p_values_after)))
+)
+
+# Modifier l'ordre des niveaux de la variable Period
+results_df$Period <- factor(results_df$Period, levels = c("Before PA", "After PA"))
+
+# Tracé des résultats par secteur
+graphique <- ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  facet_wrap(~ Period, scales = "free_y") +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur", 
+       y = "Coefficient estimé",
+       title = "Coefficients des Modèles PLM par Secteur",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+ggsave("figures/img/sub_sect_pan_paris.png", plot = graphique, width = 10, height = 7)
 
 #----------------------------------------------#
 # PANEL GLOBAL AVEC INDICATRICE CCAI*SECTORIEL #
@@ -269,7 +368,7 @@ results_df <- data.frame(
 )
 
 # Tracé des résultats par secteur
-ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
+graphique <- ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
   scale_fill_manual(values = c("grey70", "steelblue"), 
                     labels = c("P-value > 0.1", "P-value <= 0.1"),
@@ -291,7 +390,10 @@ ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
     legend.text = element_text(size = 12)
   )
 
+graphique
 
+# Sauvegarde du graphique
+ggsave("figures/img/pan_ccai_sectoriel.png", plot = graphique, width = 10, height = 7)
 
 
 
@@ -301,13 +403,18 @@ ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
 
 # Créer le modèle de régression à effets fixes incluant les interactions
 model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-               rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation +
+               rmw_5_friday + cma_5_friday + 
+               ccai_SectorConsumer.Discretionary + ccai_SectorConsumer.Staples + 
+               ccai_SectorEnergy + ccai_SectorFinancials + ccai_SectorHealth.Care + 
+               ccai_SectorIndustrials + ccai_SectorInformation.Technology + 
+               ccai_SectorMaterials + ccai_SectorReal.Estate + ccai_SectorUtilities +
+               
                post_PA_mkt_rf_3_weekly + post_PA_smb_3_weekly + post_PA_hml_3_weekly +
-               post_PA_rmw_5_friday + post_PA_cma_5_friday + post_PA_ccai_diff_ar_innovation +
-               SectorConsumer.Discretionary + SectorConsumer.Staples + 
-               SectorEnergy + SectorFinancials + SectorHealth.Care + 
-               SectorIndustrials + SectorInformation.Technology + 
-               SectorMaterials + SectorReal.Estate + SectorUtilities,
+               post_PA_rmw_5_friday + post_PA_cma_5_friday + 
+               post_PA_ccai_SectorConsumer.Discretionary + post_PA_ccai_SectorConsumer.Staples + 
+               post_PA_ccai_SectorEnergy + post_PA_ccai_SectorFinancials + post_PA_ccai_SectorHealth.Care + 
+               post_PA_ccai_SectorIndustrials + post_PA_ccai_SectorInformation.Technology + 
+               post_PA_ccai_SectorMaterials + post_PA_ccai_SectorReal.Estate + post_PA_ccai_SectorUtilities,
              data = pdata, model = "within", effect = "individual")
 
 # Obtenir les résultats des tests des coefficients
@@ -325,7 +432,7 @@ results_df <- data.frame(
 )
 
 # Créer le barplot avec ggplot2
-ggplot(results_df, aes(x = Coefficient, y = Estimated_Value, fill = Pvalue <= 0.1)) +
+graphique <- ggplot(results_df, aes(x = Coefficient, y = Estimated_Value, fill = Pvalue <= 0.1)) +
   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
   scale_fill_manual(values = c("grey70", "steelblue"), 
                     labels = c("P-value > 0.1", "P-value <= 0.1"),
@@ -346,6 +453,27 @@ ggplot(results_df, aes(x = Coefficient, y = Estimated_Value, fill = Pvalue <= 0.
     legend.title = element_text(size = 12),
     legend.text = element_text(size = 12)
   )
+
+ggsave("figures/img/pan_paris.png", plot = graphique, width = 10, height = 7)
+
+
+#------------------------------------------------#
+#  PANEL Global PA INDICATRICE CCAI*SECTORIEL    #
+#------------------------------------------------#
+
+# Créer le modèle de régression à effets fixes incluant les interactions
+model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+               rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation +
+               post_PA_mkt_rf_3_weekly + post_PA_smb_3_weekly + post_PA_hml_3_weekly +
+               post_PA_rmw_5_friday + post_PA_cma_5_friday + post_PA_ccai_diff_ar_innovation +
+               SectorConsumer.Discretionary + SectorConsumer.Staples + 
+               SectorEnergy + SectorFinancials + SectorHealth.Care + 
+               SectorIndustrials + SectorInformation.Technology + 
+               SectorMaterials + SectorReal.Estate + SectorUtilities,
+             data = pdata, model = "within", effect = "individual")
+
+# Obtenir les résultats des tests des coefficients
+coef_test <- coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
 
 
 
@@ -388,7 +516,7 @@ results_df <- data.frame(
 )
 
 # Tracé des résultats par secteur
-ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
+graphique <- ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
   scale_fill_manual(values = c("grey70", "steelblue"), 
                     labels = c("P-value > 0.1", "P-value <= 0.1"),
@@ -409,6 +537,9 @@ ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
     legend.title = element_text(size = 12),
     legend.text = element_text(size = 12)
   )
+
+
+ggsave("figures/img/sub_sect_pan.png", plot = graphique, width = 10, height = 7)
 
 # ### GLM ###
 # 
@@ -470,86 +601,6 @@ ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
 #   )
 
 
-#----------------------------------------#
-#   PANEL PARIS AGREEMENT PAR SECTOR     #
-#----------------------------------------#
-
-# Extraire les secteurs uniques
-unique_sector <- unique(pdata$Sector)
-
-# Initialiser les listes pour stocker les résultats
-results_by_sector <- list()
-models_by_sector <- list()
-
-# Formuler le modèle
-model_formula <- r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-  rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation +
-  post_PA_mkt_rf_3_weekly + post_PA_smb_3_weekly + post_PA_hml_3_weekly +
-  post_PA_rmw_5_friday + post_PA_cma_5_friday + post_PA_ccai_diff_ar_innovation
-
-# Boucle pour chaque secteur
-for (sector in unique_sector) {
-  # Filtrer les données pour le secteur actuel
-  pdata_temp <- pdata[pdata$Sector == sector,]
-  
-  # Ajuster le modèle avec effets fixes individuels
-  model <- plm(model_formula, data = pdata_temp, model = "within", effect = "individual")
-  
-  # Obtenir les résultats des tests des coefficients
-  coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
-  
-  # Stocker les résultats dans les listes
-  models_by_sector[[sector]] <- coef_test
-  
-  # Extraire les coefficients avant et après les accords de Paris
-  coefficients_before <- coef_test["ccai_diff_ar_innovation", "Estimate"]
-  coefficients_after <- coef_test["post_PA_ccai_diff_ar_innovation", "Estimate"]
-  p_values_before <- coef_test["ccai_diff_ar_innovation", "Pr(>|t|)"]
-  p_values_after <- coef_test["post_PA_ccai_diff_ar_innovation", "Pr(>|t|)"]
-  
-  results_by_sector[[sector]] <- list(
-    coefficients_before = coefficients_before,
-    coefficients_after = coefficients_after,
-    p_values_before = p_values_before,
-    p_values_after = p_values_after
-  )
-}
-
-# Créer un data frame avec les résultats
-results_df <- data.frame(
-  Secteur = rep(unique_sector, each = 2),
-  Period = rep(c("Before PA", "After PA"), times = length(unique_sector)),
-  Coefficient = unlist(lapply(results_by_sector, function(x) c(x$coefficients_before, x$coefficients_after))),
-  Pvalue = unlist(lapply(results_by_sector, function(x) c(x$p_values_before, x$p_values_after)))
-)
-
-# Modifier l'ordre des niveaux de la variable Period
-results_df$Period <- factor(results_df$Period, levels = c("Before PA", "After PA"))
-
-# Tracé des résultats par secteur
-ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
-  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
-  facet_wrap(~ Period, scales = "free_y") +
-  scale_fill_manual(values = c("grey70", "steelblue"), 
-                    labels = c("P-value > 0.1", "P-value <= 0.1"),
-                    name = "Significance") +
-  labs(x = "Secteur", 
-       y = "Coefficient estimé",
-       title = "Coefficients des Modèles PLM par Secteur",
-       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
-  theme_minimal(base_size = 14) +
-  theme(
-    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
-    plot.subtitle = element_text(hjust = 0.5, size = 12),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
-    axis.text.y = element_text(size = 12),
-    axis.title.x = element_text(size = 14, face = "bold"),
-    axis.title.y = element_text(size = 14, face = "bold"),
-    legend.position = "top",
-    legend.title = element_text(size = 12),
-    legend.text = element_text(size = 12)
-  )
-
 
 
 #----------------------------------------#
@@ -583,7 +634,7 @@ results_df <- data.frame(
   Pvalue = sapply(results_by_industry, function(x) x$p_values)
 )
 
-ggplot(results_df, aes(x = Industrie, y = Coefficient, fill = Pvalue <= 0.1)) +
+graphique <- ggplot(results_df, aes(x = Industrie, y = Coefficient, fill = Pvalue <= 0.1)) +
   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
   scale_fill_manual(values = c("grey70", "steelblue"), 
                     labels = c("P-value > 0.1", "P-value <= 0.1"),
@@ -604,6 +655,9 @@ ggplot(results_df, aes(x = Industrie, y = Coefficient, fill = Pvalue <= 0.1)) +
     legend.title = element_text(size = 12),
     legend.text = element_text(size = 12)
   )
+
+
+ggsave("figures/img/sub_industry_pan.png", plot = graphique, width = 10, height = 7)
 
 # # Modèles GLM par groupe d'industrie
 # results_by_industry <- list()
@@ -693,7 +747,7 @@ results_df <- data.frame(
   Pvalue = sapply(results_by_subindustry, function(x) x$p_values)
 )
 
-ggplot(results_df, aes(x = SubIndustry, y = Coefficient, fill = Pvalue <= 0.1)) +
+graphique <- ggplot(results_df, aes(x = SubIndustry, y = Coefficient, fill = Pvalue <= 0.1)) +
   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
   scale_fill_manual(values = c("grey70", "steelblue"), 
                     labels = c("P-value > 0.1", "P-value <= 0.1"),
@@ -714,6 +768,8 @@ ggplot(results_df, aes(x = SubIndustry, y = Coefficient, fill = Pvalue <= 0.1)) 
     legend.title = element_text(size = 12),
     legend.text = element_text(size = 12)
   )
+
+ggsave("figures/img/sub_subindustry_pan.png", plot = graphique, width = 10, height = 7)
 
 # # Modèles GLM par groupe d'industrie
 # results_by_subindustry <- list()

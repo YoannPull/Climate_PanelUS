@@ -1,0 +1,109 @@
+---
+title: "Présentation des résultats"
+format: html
+editor: visual
+---
+
+## Equation 1
+
+Equation :
+
+```{=tex}
+\begin{multline}
+    r_{i,t}-r_t^f=\alpha+\beta_{rm}.(r_t^m-r_t^f)+\beta_{SMB}.r_t^{SMB}+\beta_{HML}.r_t^{HML} + \beta_{RMW}.r_t^{RMW}+\beta_{CMA}.r_t^{CMA} \\ 
+    +\beta_{CCI}.CCI_t + \eta_s + \eta_i+\varepsilon_{i,t}
+\end{multline}
+```
+
+Tableau :
+
+```{r, echo=FALSE}
+# Charger les packages nécessaires
+library(kableExtra)
+library(knitr)
+library(broom)
+
+# Chargement des résultats
+load(file = "../../figures/estimation/res_pan_glob.RData")
+
+coef_table <- tidy(coef_test)
+
+# On renomme les colonnes pour que ce soit plus clair
+colnames(coef_table) <- c("Term", "Estimate", "Std. Error", "t value", "Pr(>|t|)")
+
+
+coef_table$`Pr(>|t|)` <- round(coef_table$`Pr(>|t|)`, 3)
+
+# Affichage de la table
+kable(coef_table, format = "html", caption = "Résultats du modèle avec effets fixes individuels et sectoriels") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, border_right = TRUE) %>%
+  column_spec(2:5, background = "#f9f9f9") %>%
+  add_header_above(c(" ", "Coefficients" = 4)) %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria")
+```
+
+------------------------------------------------------------------------
+
+
+
+## Equation 2
+
+Equation :
+
+```{=tex}
+\begin{multline}
+    r_{i,t} - r_t^f = \alpha + \beta_{rm} (r_t^m - r_t^f) + \beta_{SMB} r_t^{SMB} + \beta_{HML} r_t^{HML} + \beta_{RMW} r_t^{RMW} + \beta_{CMA} r_t^{CMA} \\ 
+    + \sum_{s=1}^S \beta_{CCI}^s \mathbb{1}_{i \in s} CCI_t + \eta_i + \varepsilon_{i,t}
+\end{multline}
+```
+Graphique : ![Graphique 1](images/pan_ccai_sectoriel.png)
+
+
+
+------------------------------------------------------------------------
+
+## Equation 3
+
+Equation :
+
+```{=tex}
+\begin{multline}    
+    r_{i \in t} - r_t^f = \alpha + \beta_{rm} (r_t^m - r_t^f) + \beta_{SMB} r_t^{SMB} + \beta_{HML} r_t^{HML} + \beta_{RMW} r_t^{RMW} + \beta_{CMA} r_t^{CMA} + \beta_{CCI} CCI_t +  \\
+    \mathbb{1}_{t > PA} \left( \hat{\alpha} + \hat{\beta}_{rm} (r_t^m - r_t^f) + \hat{\beta}_{SMB} r_t^{SMB} + \hat{\beta}_{HML} r_t^{HML} + \hat{\beta}_{RMW} r_t^{RMW} + \hat{\beta}_{CMA} r_t^{CMA} + \hat{\beta}_{CCI} CCI_t \right) \\
+    + \eta_s + \eta_i + \varepsilon_{i,t}
+\end{multline}
+```
+Graphique : ![Graphique 2](images/pan_paris.png)
+
+------------------------------------------------------------------------
+
+## Equation 4
+
+Equation :
+
+```{=tex}
+\begin{multline}    
+    r_{i \in s, t} - r_t^f = \alpha + \beta_{rm}^s (r_t^m - r_t^f) + \beta_{SMB}^s r_t^{SMB} + \beta_{HML}^s r_t^{HML} + \beta_{RMW}^s r_t^{RMW} \\ 
+    + \beta_{CMA}^s r_t^{CMA} + \beta_{CCI}^s CCI_t + \eta_i + \varepsilon_{i,t}
+\end{multline}
+```
+Graphique : ![Graphique 3](images/sub_sect_pan.png)
+
+------------------------------------------------------------------------
+
+## Equation 5
+
+Equation :
+
+```{=tex}
+\begin{multline}    
+    r_{i \in s, t} - r_t^f = \alpha + \beta_{rm}^s (r_t^m - r_t^f) + \beta_{SMB}^s r_t^{SMB} + \beta_{HML}^s r_t^{HML} + \beta_{RMW}^s r_t^{RMW} + \beta_{CMA}^s r_t^{CMA} + \beta_{CCI}^s CCI_t +  \\
+    \mathbb{1}_{t > PA} \left( \hat{\alpha} + \hat{\beta}_{rm}^s (r_t^m - r_t^f) + \hat{\beta}_{SMB}^s r_t^{SMB} + \hat{\beta}_{HML}^s r_t^{HML} + \hat{\beta}_{RMW}^s r_t^{RMW} + \hat{\beta}_{CMA}^s r_t^{CMA} + \hat{\beta}_{CCI}^s CCI_t \right) \\
+    + \eta_i + \varepsilon_{i,t}
+\end{multline}
+```
+Graphique : ![Graphique 4](images/sub_sect_pan_paris.png)
+
+------------------------------------------------------------------------
+
