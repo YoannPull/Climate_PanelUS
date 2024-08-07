@@ -14,7 +14,6 @@ Equation :
     +\beta_{CCI}.CCI_t + \eta_s + \eta_i+\varepsilon_{i,t}
 \end{multline}
 ```
-
 Tableau :
 
 ```{r, echo=FALSE}
@@ -45,8 +44,6 @@ kable(coef_table, format = "html", caption = "Résultats du modèle avec effets 
 
 ------------------------------------------------------------------------
 
-
-
 ## Equation 2
 
 Equation :
@@ -58,8 +55,6 @@ Equation :
 \end{multline}
 ```
 Graphique : ![Graphique 1](images/pan_ccai_sectoriel.png)
-
-
 
 ------------------------------------------------------------------------
 
@@ -75,6 +70,21 @@ Equation :
 \end{multline}
 ```
 Graphique : ![Graphique 2](images/pan_paris.png)
+
+------------------------------------------------------------------------
+
+## Equation à érire
+
+Equation :
+
+```{=tex}
+\begin{multline}    
+    r_{i \in t} - r_t^f = \alpha + \beta_{rm} (r_t^m - r_t^f) + \beta_{SMB} r_t^{SMB} + \beta_{HML} r_t^{HML} + \beta_{RMW} r_t^{RMW} + \beta_{CMA} r_t^{CMA} + \sum_{s=1}^S \beta_{CCI}^s \mathbb{1}_{i \in s} CCI_t +  \\
+    \mathbb{1}_{t > PA} \left( \hat{\alpha} + \hat{\beta}_{rm} (r_t^m - r_t^f) + \hat{\beta}_{SMB} r_t^{SMB} + \hat{\beta}_{HML} r_t^{HML} + \hat{\beta}_{RMW} r_t^{RMW} + \hat{\beta}_{CMA} r_t^{CMA} + \sum_{s=1}^S \hat{\beta}_{CCI}^s \mathbb{1}_{i \in s} CCI_t \right) \\
+    + \eta_i + \varepsilon_{i,t}
+\end{multline}
+```
+Graphique : ![](images/pan_paris_ccai_sect.png)
 
 ------------------------------------------------------------------------
 
@@ -106,4 +116,3 @@ Equation :
 Graphique : ![Graphique 4](images/sub_sect_pan_paris.png)
 
 ------------------------------------------------------------------------
-
