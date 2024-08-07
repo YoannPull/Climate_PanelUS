@@ -4,6 +4,7 @@ format: html
 editor: visual
 ---
 
+
 ## Equation 1
 
 Equation :
@@ -23,7 +24,7 @@ library(knitr)
 library(broom)
 
 # Chargement des résultats
-load(file = "../../figures/estimation/res_pan_glob.RData")
+load(file = "../../figures/estimation/coeff_pan_glob.RData")
 
 coef_table <- tidy(coef_test)
 
@@ -42,6 +43,12 @@ kable(coef_table, format = "html", caption = "Résultats du modèle avec effets 
   kable_classic(full_width = FALSE, html_font = "Cambria")
 ```
 
+```{r, echo = FALSE}
+load(file = "../../figures/estimation/metrics_pan_glob.RData")
+data_metrics
+```
+
+
 ------------------------------------------------------------------------
 
 ## Equation 2
@@ -55,6 +62,18 @@ Equation :
 \end{multline}
 ```
 Graphique : ![Graphique 1](images/pan_ccai_sectoriel.png)
+
+```{r,echo= FALSE}
+load(file = "../../figures/estimation/coeff_pan_ccai_sectoriel.RData")
+results_df
+```
+
+
+```{r, echo = FALSE}
+load(file = "../../figures/estimation/metrics_pan_ccai_sectoriel.RData")
+data_metrics
+```
+
 
 ------------------------------------------------------------------------
 
@@ -71,6 +90,18 @@ Equation :
 ```
 Graphique : ![Graphique 2](images/pan_paris.png)
 
+```{r,echo= FALSE}
+load("../../figures/estimation/coeff_pan_paris.RData")
+results_df
+```
+
+```{r,echo= FALSE}
+load("../../figures/estimation/metrics_pan_paris.RData")
+data_metrics
+```
+
+
+
 ------------------------------------------------------------------------
 
 ## Equation à érire
@@ -86,6 +117,8 @@ Equation :
 ```
 Graphique : ![](images/pan_paris_ccai_sect.png)
 
+
+
 ------------------------------------------------------------------------
 
 ## Equation 4
@@ -99,6 +132,12 @@ Equation :
 \end{multline}
 ```
 Graphique : ![Graphique 3](images/sub_sect_pan.png)
+
+
+```{r,echo= FALSE}
+load("../../figures/estimation/metricscoeff_sub_sect_pan.RData")
+results_df
+```
 
 ------------------------------------------------------------------------
 
@@ -115,4 +154,8 @@ Equation :
 ```
 Graphique : ![Graphique 4](images/sub_sect_pan_paris.png)
 
+```{r,echo= FALSE}
+load("../../figures/estimation/metricscoeff_sub_sect_pan_paris.RData")
+results_df
+```
 ------------------------------------------------------------------------

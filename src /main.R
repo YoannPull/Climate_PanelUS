@@ -235,16 +235,24 @@ X_panel[, `:=`(
 # Conversion en données de panel
 pdata <- pdata.frame(X_panel, index = c("ticker", "date"))
 
+# Fonction pour extraire les métriques
+extract_metrics <- function(model){
+  sum_model <- summary(model)
+  adj_r2 <- as.numeric(sum_model$r.squared[1])
+  f_stat <- as.numeric(sum_model$fstatistic$statistic)
+  
+  # Créer une data.table avec les métriques
+  metrics_dt <- data.table(
+    Adjusted_R2 = adj_r2,
+    F_statistic = f_stat
+  )
+  
+  return(metrics_dt)
+}
+
 #----------------------------------------#
 #     Regression sur le Panel Global     #
 #----------------------------------------#
-
-# Modèle avec effets fixes individuels
-model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
-               rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation,
-             data = pdata, model = "within")
-
-coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
 
 # Modèle avec effets fixes individuels et sectoriels
 model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
@@ -257,18 +265,13 @@ model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly +
 
 # Résultats avec correction de Driscroll and Kraay
 coef_test <- coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
-coef_test
-# summary(model)
 
+
+data_metrics <- extract_metrics(model)
+data_metrics
 # Enregistrement des résultats
-save(coef_test, file = "figures/estimation/res_pan_glob.RData")
-
-
-## Il semblerait que les effets fixes capturent déjà la variation dans les données.
-
-# Résultats avec correction de Driscroll and Kraay
-coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
-summary(model)
+save(coef_test, file = "figures/estimation/coeff_pan_glob.RData")
+save(data_metrics, file = "figures/estimation/metrics_pan_glob.RData")
 
 
 # # Modèle GLM avec effets fixes
@@ -317,12 +320,15 @@ for (sector in unique_sector) {
   coefficients_after <- coef_test["post_PA_ccai_diff_ar_innovation", "Estimate"]
   p_values_before <- coef_test["ccai_diff_ar_innovation", "Pr(>|t|)"]
   p_values_after <- coef_test["post_PA_ccai_diff_ar_innovation", "Pr(>|t|)"]
+  data_metrics   <- extract_metrics(model) 
   
   results_by_sector[[sector]] <- list(
     coefficients_before = coefficients_before,
     coefficients_after = coefficients_after,
     p_values_before = p_values_before,
-    p_values_after = p_values_after
+    p_values_after = p_values_after,
+    Adjusted_R2 = data_metrics$Adjusted_R2,
+    F_statistic = data_metrics$F_statistic
   )
 }
 
@@ -331,8 +337,12 @@ results_df <- data.frame(
   Secteur = rep(unique_sector, each = 2),
   Period = rep(c("Before PA", "After PA"), times = length(unique_sector)),
   Coefficient = unlist(lapply(results_by_sector, function(x) c(x$coefficients_before, x$coefficients_after))),
-  Pvalue = unlist(lapply(results_by_sector, function(x) c(x$p_values_before, x$p_values_after)))
+  Pvalue = unlist(lapply(results_by_sector, function(x) c(x$p_values_before, x$p_values_after))),
+  Adjusted_R2 = unlist(lapply(results_by_sector, function(x) rep(x$Adjusted_R2,2))),
+  F_statistic = unlist(lapply(results_by_sector, function(x) rep(x$F_statistic,2)))
 )
+
+save(results_df,file = "figures/estimation/metricscoeff_sub_sect_pan_paris.RData")
 
 # Modifier l'ordre des niveaux de la variable Period
 results_df$Period <- factor(results_df$Period, levels = c("Before PA", "After PA"))
@@ -388,6 +398,8 @@ interaction_terms <- c("ccai_SectorConsumer.Discretionary", "ccai_SectorConsumer
 
 coefficients <- coef_test[interaction_terms, "Estimate"]
 p_values <- coef_test[interaction_terms, "Pr(>|t|)"]
+data_metrics <- extract_metrics(model)
+data_metrics
 
 # Créer un data frame avec les résultats
 results_df <- data.frame(
@@ -395,6 +407,8 @@ results_df <- data.frame(
   Coefficient = coefficients,
   Pvalue = p_values
 )
+save(results_df,file = "figures/estimation/coeff_pan_ccai_sectoriel.RData")
+save(data_metrics,file = "figures/estimation/metrics_pan_ccai_sectoriel.RData")
 
 # Tracé des résultats par secteur
 graphique <- ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
@@ -448,6 +462,8 @@ coef_test <- coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag 
 # Extraire les coefficients spécifiques et leurs p-valuess
 coefficients <- coef_test[c("ccai_diff_ar_innovation", "post_PA_ccai_diff_ar_innovation"), "Estimate"]
 pvalues <- coef_test[c("ccai_diff_ar_innovation", "post_PA_ccai_diff_ar_innovation"), "Pr(>|t|)"]
+data_metrics <- extract_metrics(model)
+data_metrics
 
 # Créer un dataframe pour le plot
 results_df <- data.frame(
@@ -455,6 +471,10 @@ results_df <- data.frame(
   Estimated_Value = coefficients,
   Pvalue = pvalues
 )
+results_df
+
+save(results_df,file =  "figures/estimation/coeff_pan_paris.RData")
+save(data_metrics,file = "figures/estimation/metrics_pan_paris.RData")
 
 # Créer le barplot avec ggplot2
 graphique <- ggplot(results_df, aes(x = Coefficient, y = Estimated_Value, fill = Pvalue <= 0.1)) +
@@ -579,11 +599,19 @@ results_df <- data.frame(
   Estimated_Value = coefficients,
   Pvalue = pvalues
 )
+results_df
+
+data_metrics <- extract_metrics(model)
+data_metrics
 
 results_df$Period <- ifelse(grepl("post_PA",results_df$Coefficient, fixed = TRUE),
                             "After PA","Before PA")
 
 results_df$Period  <- factor(results_df$Period, levels = c("Before PA", "After PA"))
+
+
+save(results_df,file =  "figures/estimation/coeff_pan_paris_ccai_sect.RData")
+save(data_metrics,file =  "figures/estimation/metrics_pan_paris_ccai_sect.RData")
 
 unique_sector <- unique(pdata$Sector)
 unique_sector <- gsub(" ", ".", unique_sector)
@@ -655,7 +683,13 @@ for (sector in unique_sector) {
   coefficients <- coef_test[predictor, "Estimate"]
   p_values <- coef_test[predictor, "Pr(>|t|)"]
   
-  results_by_sector[[sector]] <- list(coefficients = coefficients, p_values = p_values)
+  data_metrics <- extract_metrics(model)
+
+  
+  results_by_sector[[sector]] <- list(coefficients = coefficients,
+                                      p_values = p_values,
+                                      adj_r2 = data_metrics$Adjusted_R2,
+                                      f_stat = data_metrics$F_statistic)
 }
 
 # Résultats par secteur
@@ -663,8 +697,12 @@ results_df <- data.frame(
   Secteur = unique_sector,
   Valeur = predictor,
   Coefficient = sapply(results_by_sector, function(x) x$coefficients),
-  Pvalue = sapply(results_by_sector, function(x) x$p_values)
+  Pvalue = sapply(results_by_sector, function(x) x$p_values),
+  Adjusted_R2 = sapply(results_by_sector, function(x) x$adj_r2),
+  F_statistic = sapply(results_by_sector, function(x) x$f_stat)
 )
+
+save(results_df,file = "figures/estimation/metricscoeff_sub_sect_pan.RData")
 
 # Tracé des résultats par secteur
 graphique <- ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
