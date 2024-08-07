@@ -176,11 +176,14 @@ X_panel[, `:=`(
 
 # Date des accords de Paris
 PA_date <- as.Date("2015-12-12")
+# Déterminé dans la dernière partie
+break_date <- as.Date("2021-07-09")
 
 # Ajouter une variable indicatrice pour la période post-PA
 X_panel$post_PA <- as.integer(X_panel$date > PA_date)
+X_panel$post_break <- as.integer(X_panel$date > break_date)
 
-# Ajout des termes d'interaction entre les variables explicatives et l'indicatrice post-PA
+# Ajout des termes d'interaction entre les variables explicatives et l'indicatrice post_PA
 X_panel[, `:=`(
   post_PA_mkt_rf_3_weekly = post_PA * mkt_rf_3_weekly,
   post_PA_smb_3_weekly = post_PA * smb_3_weekly,
@@ -203,12 +206,38 @@ post_PA_ccai_SectorReal.Estate            = post_PA*ccai_SectorReal.Estate,
 post_PA_ccai_SectorUtilities              = post_PA*ccai_SectorUtilities
 )]
 
-#----------------------------------------#
-#     Regression sur le Panel Global     #
-#----------------------------------------#
+
+
+# Ajout des termes d'interaction entre les variables explicatives et l'indicatrice post_break
+X_panel[, `:=`(
+  post_break_mkt_rf_3_weekly = post_break * mkt_rf_3_weekly,
+  post_break_smb_3_weekly = post_break * smb_3_weekly,
+  post_break_hml_3_weekly = post_break * hml_3_weekly,
+  post_break_rmw_5_friday = post_break * rmw_5_friday,
+  post_break_cma_5_friday = post_break * cma_5_friday,
+  post_break_ccai_diff_ar_innovation = post_break * ccai_diff_ar_innovation
+)]
+
+X_panel[, `:=`(
+  post_break_ccai_SectorConsumer.Discretionary = post_break*ccai_SectorConsumer.Discretionary,
+  post_break_ccai_SectorConsumer.Staples       = post_break*ccai_SectorConsumer.Staples,
+  post_break_ccai_SectorEnergy                 = post_break*ccai_SectorEnergy ,
+  post_break_ccai_SectorFinancials             = post_break*ccai_SectorFinancials,
+  post_break_ccai_SectorHealth.Care            = post_break*ccai_SectorHealth.Care,
+  post_break_ccai_SectorIndustrials            = post_break*ccai_SectorIndustrials,
+  post_break_ccai_SectorInformation.Technology = post_break*ccai_SectorInformation.Technology,
+  post_break_ccai_SectorMaterials              = post_break*ccai_SectorMaterials,
+  post_break_ccai_SectorReal.Estate            = post_break*ccai_SectorReal.Estate,
+  post_break_ccai_SectorUtilities              = post_break*ccai_SectorUtilities
+)]
+
 
 # Conversion en données de panel
 pdata <- pdata.frame(X_panel, index = c("ticker", "date"))
+
+#----------------------------------------#
+#     Regression sur le Panel Global     #
+#----------------------------------------#
 
 # Modèle avec effets fixes individuels
 model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
@@ -1172,14 +1201,101 @@ ggplot(results_comparison_melted, aes(x = Secteur, y = Coefficient, fill = Signi
 #          Détection de break            #
 #----------------------------------------#
 
-data_temp <- copy(data_variables[,.(date,ccai_diff_ar_innovation)])
+# ccai_diff_ar_innovation
+data_temp <- copy(data_variables[,.(date,ccai)])
 data_temp$date <- as.Date(data_temp$date)
 
 # Création d'une série temporelle zoo
-zoo_ccai_ar <- zoo(data_temp$ccai_diff_ar_innovation, order.by = data_temp$date)
+zoo_ccai_ar <- zoo(data_temp$ccai, order.by = data_temp$date)
+
+summary(ur.za(zoo_ccai_ar, model="both",lag=1))
+
+zoo_ccai_ar[696]
+
+plot(ur.za(zoo_ccai_ar, model="both",lag=1))
 
 # Affichage de la série temporelle
 plot(zoo_ccai_ar, main = "Série temporelle de ccai_diff_ar_innovation (fréquence hebdomadaire)",
      xlab = "Date", ylab = "ccai_diff_ar_innovation")
+abline(v = index(zoo_ccai_ar)[696], col = "red", lwd = 1)
+
+## Test au niveau du break de la significativité
+
+# Extraire les secteurs uniques
+unique_sector <- unique(pdata$Sector)
+
+# Initialiser les listes pour stocker les résultats
+results_by_sector <- list()
+models_by_sector <- list()
+
+# Formuler le modèle
+model_formula <- r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+  rmw_5_friday + cma_5_friday + ccai_diff_ar_innovation +
+  post_break_mkt_rf_3_weekly + post_break_smb_3_weekly + post_break_hml_3_weekly +
+  post_break_rmw_5_friday + post_break_cma_5_friday + post_break_ccai_diff_ar_innovation
+
+# Boucle pour chaque secteur
+for (sector in unique_sector) {
+  # Filtrer les données pour le secteur actuel
+  pdata_temp <- pdata[pdata$Sector == sector,]
+  
+  # Ajuster le modèle avec effets fixes individuels
+  model <- plm(model_formula, data = pdata_temp, model = "within", effect = "individual")
+  
+  # Obtenir les résultats des tests des coefficients
+  coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
+  
+  # Stocker les résultats dans les listes
+  models_by_sector[[sector]] <- coef_test
+  
+  # Extraire les coefficients avant et après les accords de Paris
+  coefficients_before <- coef_test["ccai_diff_ar_innovation", "Estimate"]
+  coefficients_after <- coef_test["post_break_ccai_diff_ar_innovation", "Estimate"]
+  p_values_before <- coef_test["ccai_diff_ar_innovation", "Pr(>|t|)"]
+  p_values_after <- coef_test["post_break_ccai_diff_ar_innovation", "Pr(>|t|)"]
+  
+  results_by_sector[[sector]] <- list(
+    coefficients_before = coefficients_before,
+    coefficients_after = coefficients_after,
+    p_values_before = p_values_before,
+    p_values_after = p_values_after
+  )
+}
+
+# Créer un data frame avec les résultats
+results_df <- data.frame(
+  Secteur = rep(unique_sector, each = 2),
+  Period = rep(c("Before Break", "After Break"), times = length(unique_sector)),
+  Coefficient = unlist(lapply(results_by_sector, function(x) c(x$coefficients_before, x$coefficients_after))),
+  Pvalue = unlist(lapply(results_by_sector, function(x) c(x$p_values_before, x$p_values_after)))
+)
+
+# Modifier l'ordre des niveaux de la variable Period
+results_df$Period <- factor(results_df$Period, levels = c("Before Break", "After Break"))
+
+# Tracé des résultats par secteur
+graphique <- ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  facet_wrap(~ Period, scales = "free_y") +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur", 
+       y = "Coefficient estimé",
+       title = "Coefficients des Modèles PLM par Secteur avant et après le break déterminé",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
 
 
+graphique
