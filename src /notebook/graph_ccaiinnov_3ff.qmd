@@ -1,0 +1,175 @@
+---
+title: "Présentation des résultats : Innovation CCAI (u_t^{CCAI}) avec le modèle à 3 facteurs"
+format: html
+editor: visual
+embed-resources: true
+---
+
+```{r, results = 'hide', message=FALSE,warning=FALSE,echo=FALSE}
+# Exécution du script R qui genère les graphiques
+source("../panel_ccaiinnov_3ff.R")
+```
+
+Le modèle AR(2) pour $CCAI_t$ est exprimé comme suit :
+
+$$
+CCAI_t = \phi_1 \cdot CCAI_{t-1} + \phi_2 \cdot CCAI_{t-2} + \epsilon_t
+$$
+
+où :
+
+-   $\phi\_1$ et $phi\_2$ sont les coefficients d'auto-régression,
+-   $\epsilon\_t$ est le terme d'erreur ou le résidu à l'instant \$ t \$.
+
+Dans la suite les résidus $\epsilon\_t$ du modèle AR(2) seront notés comme suit :
+
+$$
+u_t^{CCAI} = CCAI_t - (\phi_1 \cdot CCAI_{t-1} + \phi_2 \cdot CCAI_{t-2})
+$$
+
+On s'intéresse dans la suite à mesurer la contribution de $u_t^{CCAI}$ dans l'explication des rendements d'actions du S&P 500.
+
+## Equation 1
+
+Equation :
+
+```{=tex}
+\begin{multline}
+    r_{i,t}-r_t^f=\alpha+\beta_{MKT}.(r_t^m-r_t^f)+\beta_{SMB}.SMB_t+\beta_{HML}.HML_t 
+    +\beta_{CCAI}.u_t^{CCAI} + \eta_s + \eta_i+\varepsilon_{i,t}
+\end{multline}
+```
+Tableau :
+
+```{r, echo=FALSE}
+# Charger les packages nécessaires
+library(kableExtra)
+library(knitr)
+library(broom)
+
+# Chargement des résultats
+load(file = "../../figures/estimation/coeff_pan_glob.RData")
+
+coef_table <- tidy(coef_test)
+
+# On renomme les colonnes pour que ce soit plus clair
+colnames(coef_table) <- c("Term", "Estimate", "Std. Error", "t value", "Pr(>|t|)")
+
+
+coef_table$`Pr(>|t|)` <- round(coef_table$`Pr(>|t|)`, 3)
+
+# Affichage de la table
+kable(coef_table, format = "html", caption = "Résultats du modèle avec effets fixes individuels et sectoriels") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = FALSE) %>%
+  column_spec(1, bold = TRUE, border_right = TRUE) %>%
+  column_spec(2:5, background = "#f9f9f9") %>%
+  add_header_above(c(" ", "Coefficients" = 4)) %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria")
+```
+
+```{r, echo = FALSE}
+load(file = "../../figures/estimation/metrics_pan_glob.RData")
+data_metrics
+```
+
+------------------------------------------------------------------------
+
+## Equation 2
+
+Equation :
+
+```{=tex}
+\begin{multline}
+    r_{i,t} - r_t^f = \alpha + \beta_{MKT} (r_t^m - r_t^f) + \beta_{SMB} SMB_t + \beta_{HML} HML_t \\ 
+    + \sum_{s=1}^S \beta_{CCAI}^s \mathbb{1}_{i \in s} u_t^{CCAI} + \eta_i + \varepsilon_{i,t}
+\end{multline}
+```
+Graphique : ![Graphique 1](../../figures/img/pan_ccai_sectoriel.png)
+
+```{r,echo= FALSE}
+load(file = "../../figures/estimation/coeff_pan_ccai_sectoriel.RData")
+results_df
+```
+
+```{r, echo = FALSE}
+load(file = "../../figures/estimation/metrics_pan_ccai_sectoriel.RData")
+data_metrics
+```
+
+------------------------------------------------------------------------
+
+## Equation 3
+
+Equation :
+
+```{=tex}
+\begin{multline}    
+    r_{i \in t} - r_t^f = \alpha + \beta_{MKT} (r_t^m - r_t^f) + \beta_{SMB} SMB_t + \beta_{HML} HML_t  + \beta_{CCAI} u_t^{CCAI} +  \\
+    \mathbb{1}_{t > PA} \left( \hat{\alpha} + \hat{\beta}_{MKT} (r_t^m - r_t^f) + \hat{\beta}_{SMB} SMB_t + \hat{\beta}_{HML} HML_t + \hat{\beta}_{CCAI} u_t^{CCAI} \right) + \eta_s + \eta_i + \varepsilon_{i,t}
+\end{multline}
+```
+Graphique : ![Graphique 2](../../figures/img/pan_paris.png)
+
+```{r,echo= FALSE}
+load("../../figures/estimation/coeff_pan_paris.RData")
+results_df
+```
+
+```{r,echo= FALSE}
+load("../../figures/estimation/metrics_pan_paris.RData")
+data_metrics
+```
+
+------------------------------------------------------------------------
+
+## Equation 4
+
+Equation :
+
+```{=tex}
+\begin{multline}    
+    r_{i \in t} - r_t^f = \alpha + \beta_{MKT} (r_t^m - r_t^f) + \beta_{SMB} SMB_t + \beta_{HML} HML_t  + \sum_{s=1}^S \beta_{CCAI}^s \mathbb{1}_{i \in s}u_t^{CCAI} +  \\
+    \mathbb{1}_{t > PA} \left( \hat{\alpha} + \hat{\beta}_{MKT} (r_t^m - r_t^f) + \hat{\beta}_{SMB} SMB_t + \hat{\beta}_{HML} HML_t + \sum_{s=1}^S \hat{\beta}_{CCAI}^s \mathbb{1}_{i \in s} u_t^{CCAI} \right) + \eta_i + \varepsilon_{i,t}
+\end{multline}
+```
+Graphique : ![](../../figures/img/pan_paris_ccai_sect.png)
+
+------------------------------------------------------------------------
+
+## Equation 5
+
+Equation :
+
+```{=tex}
+\begin{multline}    
+    r_{i \in s, t} - r_t^f = \alpha + \beta_{MKT}^s (r_t^m - r_t^f) + \beta_{SMB}^s SMB_t + \beta_{HML}^s HML_t  
+     + \beta_{CCAI}^s u_t^{CCAI} + \eta_i + \varepsilon_{i,t}
+\end{multline}
+```
+Graphique : ![Graphique 3](../../figures/img/sub_sect_pan.png)
+
+```{r,echo= FALSE}
+load("../../figures/estimation/metricscoeff_sub_sect_pan.RData")
+results_df
+```
+
+------------------------------------------------------------------------
+
+## Equation 6
+
+Equation :
+
+```{=tex}
+\begin{multline}    
+    r_{i \in s, t} - r_t^f = \alpha + \beta_{MKT}^s (r_t^m - r_t^f) + \beta_{SMB}^s SMB_t + \beta_{HML}^s HML_t +  \beta_{CCAI}^s u_t^{CCAI} +  \\
+    \mathbb{1}_{t > PA} \left( \hat{\alpha} + \hat{\beta}_{MKT}^s (r_t^m - r_t^f) + \hat{\beta}_{SMB}^s SMB_t + \hat{\beta}_{HML}^s HML_t + \hat{\beta}_{CCAI}^s u_t^{CCAI} \right) + \eta_i + \varepsilon_{i,t}
+\end{multline}
+```
+Graphique : ![Graphique 4](../../figures/img/sub_sect_pan_paris.png)
+
+```{r,echo= FALSE}
+load("../../figures/estimation/metricscoeff_sub_sect_pan_paris.RData")
+results_df
+```
+
+------------------------------------------------------------------------

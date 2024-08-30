@@ -1,0 +1,23 @@
+project:
+  type: website
+
+website:
+  title: "Impact du Risque Climatique"
+  navbar:
+    left:
+      - text: "Accueil"
+        href: index.qmd
+      - text: "CCAI 3FF"
+        href: graph_ccai_3ff.qmd
+      - text: "CCAI Innov 3FF"
+        href: graph_ccaiinnov_3ff.qmd
+      - text: "Ardia 3FF"
+        href: graph_ardia_3ff.qmd 
+      - text: "Ardia Innov 3FF"
+        href: graph_ardiainnov_3ff.qmd
+    right:
+      - icon: github
+        href: https://github.com/YoannPull
+
+# Page d'accueil du site
+output-dir: _site

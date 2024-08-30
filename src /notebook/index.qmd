@@ -1,0 +1,14 @@
+---
+title: "Accueil"
+---
+
+# Recapatitulatif des résultats
+
+
+- [Page 1 : CCAI 3FF](graph_ccai_3ff.qmd)
+\\\\
+- [Page 2 : CCAI Innov 3FF](graph_ccaiinnov_3ff.qmd)
+\\\\
+- [Page 3 : Ardia 3FF](graph_ardia_3ff.qmd)
+\\\\
+- [Page 4 : Ardia Innov 3FF](graph_ardiainnov_3ff.qmd)

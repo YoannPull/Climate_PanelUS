@@ -1,0 +1,1309 @@
+library(data.table)
+library(lubridate)
+library(readxl)
+library(forecast)
+library(tseries)
+library(ggplot2)
+library(sandwich)
+library(reshape2)
+library(plm)
+library(lmtest)
+library(zoo)
+library(urca)
+
+
+setwd("/Users/yoannpull/Desktop/Square Management/climate_panel_us")
+
+
+# Chemins des fichiers Excel
+path_excel_1 <- "data/fichier1.xlsx"
+path_excel_2 <- "data/fichier2.xlsx"
+
+#----------------------------------------#
+#          CHARGEMENT DES DONNÉES        #
+#----------------------------------------#
+
+# Lecture des données depuis les fichiers Excel
+data_variables <- setDT(read_excel(path_excel_1, sheet = "Fama_CCAI_Weekly"))
+data_sp500 <- setDT(read_excel(path_excel_1, sheet = "Data_SP500_Weekly"))
+data_clim_index <- setDT(read_excel(path_excel_2, sheet = "Indices_Climatique"))
+data_sharesinfo <- setDT(read_excel(path_excel_2, sheet = "Information_SP500"))
+
+# Il n'y a pas de donnée sur la dernière ligne
+data_variables <- data_variables[-nrow(data_variables)]
+
+
+#----------------------------------------#
+#         Stationarité de MCCC           #
+#----------------------------------------#
+data_mccc <- copy(data_clim_index[,.(Date,ardia)])
+data_mccc[, date := as.Date(Date)]
+
+# Créer une nouvelle colonne pour le début de la semaine (Samedi)
+data_mccc[, week_start := date - (wday(date) %% 7)]
+# Ajuster la colonne week_start pour qu'elle corresponde au vendredi de la même semaine
+data_mccc[, week_start := week_start + 6]
+# Agréger par la période hebdomadaire (Samedi à Vendredi)
+data_mccc <- data_mccc[, .(ardia = mean(ardia, na.rm = TRUE)), by = week_start]
+
+
+setnames(data_mccc,c("week_start","ardia"),c("date","mccc"))
+data_mccc <- data_mccc[(date >= "2008-03-07") & (date <= "2024-02-23"),] 
+data_mccc$date <- as.Date(data_mccc$date)
+
+# Création d'une série temporelle zoo
+zoo_mccc <- zoo(data_mccc$mccc, order.by = data_mccc$date)
+
+# Affichage de la série temporelle
+plot(zoo_mccc, main = "Série temporelle de mccc (fréquence hebdomadaire)",
+     xlab = "Date", ylab = "mccc")
+
+
+# Test de Dickey-Fuller augmenté (ADF)
+adf_test <- adf.test(zoo_mccc)
+print("Résultats du test de Dickey-Fuller augmenté (ADF) :")
+print(adf_test)
+
+# Test KPSS
+kpss_test <- ur.kpss(zoo_mccc)
+print("Résultats du test KPSS :")
+summary(kpss_test)
+
+# Les tests montrent des résultats contradictoires :
+# - Le test ADF indique que la série est stationnaire (p-value < 0.05).
+# - Le test KPSS indique que la série n'est pas stationnaire (valeur du test > valeurs critiques).
+
+
+# Ajout de l'indice MCCC de Ardia dans le data frame data_variables
+data_variables$mccc <- data_mccc$mccc
+# Différenciation de la série temporelle
+diff_zoo_mccc <- diff(zoo_mccc)
+
+# Suppression des valeurs NA résultant de la différenciation
+diff_zoo_mccc <- na.omit(diff_zoo_mccc)
+
+# Test de stationnarité sur la série différenciée
+
+# Test de Dickey-Fuller augmenté (ADF) sur la série différenciée
+adf_test_diff <- adf.test(diff_zoo_mccc)
+print("Résultats du test de Dickey-Fuller augmenté (ADF) sur la série différenciée :")
+print(adf_test_diff)
+
+# Test KPSS sur la série différenciée
+kpss_test_diff <- ur.kpss(diff_zoo_mccc, type = "mu")
+print("Résultats du test KPSS sur la série différenciée :")
+summary(kpss_test_diff)
+
+# Les deux tests (ADF et KPSS) sur la série différenciée indiquent que la série différenciée est stationnaire.
+
+plot(diff_zoo_mccc, main = "Série temporelle de ccai_diff (fréquence hebdomadaire)",
+     xlab = "Date", ylab = "mccc")
+
+
+#----------------------------------------#
+#        PRÉPARATION DU PANEL            #
+#----------------------------------------#
+
+# Nombre de tickets et de périodes
+nbr_tickets <- nrow(data_sharesinfo)
+Tt <- nrow(data_variables)
+
+data_temp <- copy(data_sp500[, .(ticker,date, r_stock, Sector, IndustryGroup, Industry, SubIndustry)])
+
+
+X_panel <- merge(data_temp, data_variables[,.(date, rf_3_weekly, mkt_rf_3_weekly, smb_3_weekly, hml_3_weekly,
+                                              rmw_5_friday, cma_5_friday,mccc, ccai)],
+                 by = "date", all.x = TRUE)
+X_panel[, r_rf := r_stock - rf_3_weekly]
+X_panel <- X_panel[, .(ticker,date, r_rf, mkt_rf_3_weekly, smb_3_weekly, hml_3_weekly,
+                       rmw_5_friday, cma_5_friday, mccc, ccai, Sector,
+                       IndustryGroup, Industry, SubIndustry)]
+X_panel <- X_panel[order(ticker, date)]
+
+X_panel <- na.omit(X_panel)
+
+# Dummies pour les secteurs
+dummies_sector_matrix <- model.matrix(~ Sector + 0, data = X_panel)
+# Ajouter les dummies au data frame
+X_panel <- cbind(X_panel[, .(ticker,date, r_rf, mkt_rf_3_weekly, smb_3_weekly, hml_3_weekly,
+                             rmw_5_friday, cma_5_friday, mccc, ccai, Sector,
+                             IndustryGroup, Industry, SubIndustry)],
+                 dummies_sector_matrix)
+
+# Ajout des MCCC*Dummies_Sector
+X_panel[, `:=`(
+  mccc_SectorConsumer.Discretionary = mccc * `SectorConsumer Discretionary`,
+  mccc_SectorConsumer.Staples       = mccc * `SectorConsumer Staples`,
+  mccc_SectorEnergy                 = mccc * `SectorEnergy`,
+  mccc_SectorFinancials             = mccc * `SectorFinancials`,
+  mccc_SectorHealth.Care            = mccc * `SectorHealth Care`,
+  mccc_SectorIndustrials            = mccc * `SectorIndustrials`,
+  mccc_SectorInformation.Technology = mccc * `SectorInformation Technology`,
+  mccc_SectorMaterials              = mccc * `SectorMaterials`,
+  mccc_SectorReal.Estate            = mccc * `SectorReal Estate`,
+  mccc_SectorUtilities              = mccc * `SectorUtilities`
+)]
+
+# Date des accords de Paris
+PA_date <- as.Date("2015-12-12")
+# Déterminé dans la dernière partie
+break_date <- as.Date("2021-07-09")
+
+# Ajouter une variable indicatrice pour la période post-PA
+X_panel$post_PA <- as.integer(X_panel$date > PA_date)
+X_panel$post_break <- as.integer(X_panel$date > break_date)
+
+# Ajout des termes d'interaction entre les variables explicatives et l'indicatrice post_PA
+X_panel[, `:=`(
+  post_PA_mkt_rf_3_weekly = post_PA * mkt_rf_3_weekly,
+  post_PA_smb_3_weekly = post_PA * smb_3_weekly,
+  post_PA_hml_3_weekly = post_PA * hml_3_weekly,
+  post_PA_rmw_5_friday = post_PA * rmw_5_friday,
+  post_PA_cma_5_friday = post_PA * cma_5_friday,
+  post_PA_mccc = post_PA * mccc
+)]
+
+X_panel[, `:=`(
+  post_PA_mccc_SectorConsumer.Discretionary = post_PA*mccc_SectorConsumer.Discretionary,
+  post_PA_mccc_SectorConsumer.Staples       = post_PA*mccc_SectorConsumer.Staples,
+  post_PA_mccc_SectorEnergy                 = post_PA*mccc_SectorEnergy ,
+  post_PA_mccc_SectorFinancials             = post_PA*mccc_SectorFinancials,
+  post_PA_mccc_SectorHealth.Care            = post_PA*mccc_SectorHealth.Care,
+  post_PA_mccc_SectorIndustrials            = post_PA*mccc_SectorIndustrials,
+  post_PA_mccc_SectorInformation.Technology = post_PA*mccc_SectorInformation.Technology,
+  post_PA_mccc_SectorMaterials              = post_PA*mccc_SectorMaterials,
+  post_PA_mccc_SectorReal.Estate            = post_PA*mccc_SectorReal.Estate,
+  post_PA_mccc_SectorUtilities              = post_PA*mccc_SectorUtilities
+)]
+
+
+
+# Ajout des termes d'interaction entre les variables explicatives et l'indicatrice post_break
+X_panel[, `:=`(
+  post_break_mkt_rf_3_weekly = post_break * mkt_rf_3_weekly,
+  post_break_smb_3_weekly = post_break * smb_3_weekly,
+  post_break_hml_3_weekly = post_break * hml_3_weekly,
+  post_break_rmw_5_friday = post_break * rmw_5_friday,
+  post_break_cma_5_friday = post_break * cma_5_friday,
+  post_break_mccc = post_break * mccc
+)]
+
+X_panel[, `:=`(
+  post_break_mccc_SectorConsumer.Discretionary = post_break*mccc_SectorConsumer.Discretionary,
+  post_break_mccc_SectorConsumer.Staples       = post_break*mccc_SectorConsumer.Staples,
+  post_break_mccc_SectorEnergy                 = post_break*mccc_SectorEnergy ,
+  post_break_mccc_SectorFinancials             = post_break*mccc_SectorFinancials,
+  post_break_mccc_SectorHealth.Care            = post_break*mccc_SectorHealth.Care,
+  post_break_mccc_SectorIndustrials            = post_break*mccc_SectorIndustrials,
+  post_break_mccc_SectorInformation.Technology = post_break*mccc_SectorInformation.Technology,
+  post_break_mccc_SectorMaterials              = post_break*mccc_SectorMaterials,
+  post_break_mccc_SectorReal.Estate            = post_break*mccc_SectorReal.Estate,
+  post_break_mccc_SectorUtilities              = post_break*mccc_SectorUtilities
+)]
+
+
+# Conversion en données de panel
+pdata <- pdata.frame(X_panel, index = c("ticker", "date"))
+
+# Fonction pour extraire les métriques
+extract_metrics <- function(model){
+  sum_model <- summary(model)
+  adj_r2 <- as.numeric(sum_model$r.squared[1])
+  f_stat <- as.numeric(sum_model$fstatistic$statistic)
+  
+  # Créer une data.table avec les métriques
+  metrics_dt <- data.table(
+    Adjusted_R2 = adj_r2,
+    F_statistic = f_stat
+  )
+  
+  return(metrics_dt)
+}
+
+#----------------------------------------#
+#     Regression sur le Panel Global     #
+#----------------------------------------#
+
+# Modèle avec effets fixes individuels et sectoriels
+model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+               rmw_5_friday + cma_5_friday + mccc +
+               SectorConsumer.Discretionary + SectorConsumer.Staples + 
+               SectorEnergy + SectorFinancials + SectorHealth.Care + 
+               SectorIndustrials + SectorInformation.Technology + 
+               SectorMaterials + SectorReal.Estate + SectorUtilities,
+             data = pdata, model = "within", effect = "individual")
+
+# Résultats avec correction de Driscroll and Kraay
+coef_test <- coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
+
+
+data_metrics <- extract_metrics(model)
+data_metrics
+# Enregistrement des résultats
+save(coef_test, file = "figures/estimation/coeff_pan_glob.RData")
+save(data_metrics, file = "figures/estimation/metrics_pan_glob.RData")
+
+
+# # Modèle GLM avec effets fixes
+# X_panel$ticker <- factor(X_panel$ticker)
+# model_glm <- glm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+#                    rmw_5_friday + cma_5_friday + mccc + ticker,
+#                  data = X_panel)
+# robust_se_glm <- vcovHC(model_glm, type = "HC1")
+# coeftest(model_glm, vcov = robust_se_glm)
+# summary(model_glm)
+
+
+#----------------------------------------#
+#   PANEL PARIS AGREEMENT PAR SECTOR     #
+#----------------------------------------#
+
+# Extraire les secteurs uniques
+unique_sector <- unique(pdata$Sector)
+
+# Initialiser les listes pour stocker les résultats
+results_by_sector <- list()
+models_by_sector <- list()
+
+# Formuler le modèle
+model_formula <- r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+  rmw_5_friday + cma_5_friday + mccc +
+  post_PA_mkt_rf_3_weekly + post_PA_smb_3_weekly + post_PA_hml_3_weekly +
+  post_PA_rmw_5_friday + post_PA_cma_5_friday + post_PA_mccc
+
+# Boucle pour chaque secteur
+for (sector in unique_sector) {
+  # Filtrer les données pour le secteur actuel
+  pdata_temp <- pdata[pdata$Sector == sector,]
+  
+  # Ajuster le modèle avec effets fixes individuels
+  model <- plm(model_formula, data = pdata_temp, model = "within", effect = "individual")
+  
+  # Obtenir les résultats des tests des coefficients
+  coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
+  
+  # Stocker les résultats dans les listes
+  models_by_sector[[sector]] <- coef_test
+  
+  # Extraire les coefficients avant et après les accords de Paris
+  coefficients_before <- coef_test["mccc", "Estimate"]
+  coefficients_after <- coef_test["post_PA_mccc", "Estimate"]
+  p_values_before <- coef_test["mccc", "Pr(>|t|)"]
+  p_values_after <- coef_test["post_PA_mccc", "Pr(>|t|)"]
+  data_metrics   <- extract_metrics(model) 
+  
+  results_by_sector[[sector]] <- list(
+    coefficients_before = coefficients_before,
+    coefficients_after = coefficients_after,
+    p_values_before = p_values_before,
+    p_values_after = p_values_after,
+    Adjusted_R2 = data_metrics$Adjusted_R2,
+    F_statistic = data_metrics$F_statistic
+  )
+}
+
+# Créer un data frame avec les résultats
+results_df <- data.frame(
+  Secteur = rep(unique_sector, each = 2),
+  Period = rep(c("Before PA", "After PA"), times = length(unique_sector)),
+  Coefficient = unlist(lapply(results_by_sector, function(x) c(x$coefficients_before, x$coefficients_after))),
+  Pvalue = unlist(lapply(results_by_sector, function(x) c(x$p_values_before, x$p_values_after))),
+  Adjusted_R2 = unlist(lapply(results_by_sector, function(x) rep(x$Adjusted_R2,2))),
+  F_statistic = unlist(lapply(results_by_sector, function(x) rep(x$F_statistic,2)))
+)
+
+save(results_df,file = "figures/estimation/metricscoeff_sub_sect_pan_paris.RData")
+
+# Modifier l'ordre des niveaux de la variable Period
+results_df$Period <- factor(results_df$Period, levels = c("Before PA", "After PA"))
+
+# Tracé des résultats par secteur
+graphique <- ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  facet_wrap(~ Period, scales = "free_y") +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur", 
+       y = "Coefficient estimé",
+       title = "Coefficients des Modèles PLM par Secteur",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+ggsave("figures/img/sub_sect_pan_paris.png", plot = graphique, width = 10, height = 7)
+
+#----------------------------------------------#
+# PANEL GLOBAL AVEC INDICATRICE MCCC*SECTORIEL #
+#----------------------------------------------#
+
+
+# Créer le modèle de régression à effets fixes incluant les interactions
+model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+               rmw_5_friday + cma_5_friday +
+               mccc_SectorConsumer.Discretionary + mccc_SectorConsumer.Staples + 
+               mccc_SectorEnergy + mccc_SectorFinancials + mccc_SectorHealth.Care + 
+               mccc_SectorIndustrials + mccc_SectorInformation.Technology + 
+               mccc_SectorMaterials + mccc_SectorReal.Estate + mccc_SectorUtilities,
+             data = pdata, model = "within", effect = "individual")
+
+# Obtenir les résultats des tests des coefficients
+coef_test <- coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
+
+# Extraire les coefficients et les p-values des termes d'interaction
+interaction_terms <- c("mccc_SectorConsumer.Discretionary", "mccc_SectorConsumer.Staples",
+                       "mccc_SectorEnergy", "mccc_SectorFinancials", "mccc_SectorHealth.Care",
+                       "mccc_SectorIndustrials", "mccc_SectorInformation.Technology",
+                       "mccc_SectorMaterials", "mccc_SectorReal.Estate", "mccc_SectorUtilities")
+
+coefficients <- coef_test[interaction_terms, "Estimate"]
+p_values <- coef_test[interaction_terms, "Pr(>|t|)"]
+data_metrics <- extract_metrics(model)
+data_metrics
+
+# Créer un data frame avec les résultats
+results_df <- data.frame(
+  Secteur = interaction_terms,
+  Coefficient = coefficients,
+  Pvalue = p_values
+)
+save(results_df,file = "figures/estimation/coeff_pan_ccai_sectoriel.RData")
+save(data_metrics,file = "figures/estimation/metrics_pan_ccai_sectoriel.RData")
+
+# Tracé des résultats par secteur
+graphique <- ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur", 
+       y = "Coefficient estimé",
+       title = "Coefficients du panel global par mccc*Secteur",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+graphique
+
+# Sauvegarde du graphique
+ggsave("figures/img/pan_ccai_sectoriel.png", plot = graphique, width = 10, height = 7)
+
+
+
+#------------------------------------------------#
+#  PANEL Global PA INDICATRICE SECT ET INDI      #
+#------------------------------------------------#
+
+# Créer le modèle de régression à effets fixes incluant les interactions
+model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+               rmw_5_friday + cma_5_friday + mccc +
+               post_PA_mkt_rf_3_weekly + post_PA_smb_3_weekly + post_PA_hml_3_weekly +
+               post_PA_rmw_5_friday + post_PA_cma_5_friday + post_PA_mccc +
+               SectorConsumer.Discretionary + SectorConsumer.Staples + 
+               SectorEnergy + SectorFinancials + SectorHealth.Care + 
+               SectorIndustrials + SectorInformation.Technology + 
+               SectorMaterials + SectorReal.Estate + SectorUtilities,
+             data = pdata, model = "within", effect = "individual")
+
+
+# Obtenir les résultats des tests des coefficients
+coef_test <- coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
+
+# Extraire les coefficients spécifiques et leurs p-valuess
+coefficients <- coef_test[c("mccc", "post_PA_mccc"), "Estimate"]
+pvalues <- coef_test[c("mccc", "post_PA_mccc"), "Pr(>|t|)"]
+data_metrics <- extract_metrics(model)
+data_metrics
+
+# Créer un dataframe pour le plot
+results_df <- data.frame(
+  Coefficient = c("mccc", "post_PA_mccc"),
+  Estimated_Value = coefficients,
+  Pvalue = pvalues
+)
+results_df
+
+save(results_df,file =  "figures/estimation/coeff_pan_paris.RData")
+save(data_metrics,file = "figures/estimation/metrics_pan_paris.RData")
+
+# Créer le barplot avec ggplot2
+graphique <- ggplot(results_df, aes(x = Coefficient, y = Estimated_Value, fill = Pvalue <= 0.1)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Coefficients", 
+       y = "Estimated Value",
+       title = "Estimated Coefficients for mccc and post_PA_mccc",
+       subtitle = "With indication of significance (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+ggsave("figures/img/pan_paris.png", plot = graphique, width = 10, height = 7)
+
+
+#------------------------------------------------#
+#  PANEL Global PA INDICATRICE CCAI*SECTORIEL    #
+#------------------------------------------------#
+
+# Créer le modèle de régression à effets fixes incluant les interactions
+model <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+               rmw_5_friday + cma_5_friday + 
+               mccc_SectorConsumer.Discretionary + mccc_SectorConsumer.Staples + 
+               mccc_SectorEnergy + mccc_SectorFinancials + mccc_SectorHealth.Care + 
+               mccc_SectorIndustrials + mccc_SectorInformation.Technology + 
+               mccc_SectorMaterials + mccc_SectorReal.Estate + mccc_SectorUtilities +
+               
+               post_PA_mkt_rf_3_weekly + post_PA_smb_3_weekly + post_PA_hml_3_weekly +
+               post_PA_rmw_5_friday + post_PA_cma_5_friday + 
+               post_PA_mccc_SectorConsumer.Discretionary + post_PA_mccc_SectorConsumer.Staples + 
+               post_PA_mccc_SectorEnergy + post_PA_mccc_SectorFinancials + post_PA_mccc_SectorHealth.Care + 
+               post_PA_mccc_SectorIndustrials + post_PA_mccc_SectorInformation.Technology + 
+               post_PA_mccc_SectorMaterials + post_PA_mccc_SectorReal.Estate + post_PA_mccc_SectorUtilities,
+             data = pdata, model = "within", effect = "individual")
+
+# Obtenir les résultats des tests des coefficients
+coef_test <- coeftest(model, vcov = function(x) vcovSCC(x, type = "HC1", maxlag = 7))
+
+
+
+# Extraire les coefficients spécifiques et leurs p-valuess
+coefficients <- coef_test[c("mccc_SectorConsumer.Discretionary",
+                            "mccc_SectorConsumer.Staples",
+                            "mccc_SectorEnergy",
+                            "mccc_SectorFinancials",
+                            "mccc_SectorHealth.Care",
+                            "mccc_SectorIndustrials",
+                            "mccc_SectorInformation.Technology",
+                            "mccc_SectorMaterials",
+                            "mccc_SectorReal.Estate",
+                            "mccc_SectorUtilities",
+                            
+                            "post_PA_mccc_SectorConsumer.Discretionary",
+                            "post_PA_mccc_SectorConsumer.Staples",
+                            "post_PA_mccc_SectorEnergy",
+                            "post_PA_mccc_SectorFinancials",
+                            "post_PA_mccc_SectorHealth.Care",
+                            "post_PA_mccc_SectorIndustrials",
+                            "post_PA_mccc_SectorInformation.Technology",
+                            "post_PA_mccc_SectorMaterials",
+                            "post_PA_mccc_SectorReal.Estate",
+                            "post_PA_mccc_SectorUtilities"),
+                          "Estimate"]
+pvalues <- coef_test[c("mccc_SectorConsumer.Discretionary",
+                       "mccc_SectorConsumer.Staples",
+                       "mccc_SectorEnergy",
+                       "mccc_SectorFinancials",
+                       "mccc_SectorHealth.Care",
+                       "mccc_SectorIndustrials",
+                       "mccc_SectorInformation.Technology",
+                       "mccc_SectorMaterials",
+                       "mccc_SectorReal.Estate",
+                       "mccc_SectorUtilities",
+                       
+                       "post_PA_mccc_SectorConsumer.Discretionary",
+                       "post_PA_mccc_SectorConsumer.Staples",
+                       "post_PA_mccc_SectorEnergy",
+                       "post_PA_mccc_SectorFinancials",
+                       "post_PA_mccc_SectorHealth.Care",
+                       "post_PA_mccc_SectorIndustrials",
+                       "post_PA_mccc_SectorInformation.Technology",
+                       "post_PA_mccc_SectorMaterials",
+                       "post_PA_mccc_SectorReal.Estate",
+                       "post_PA_mccc_SectorUtilities")
+                     ,"Pr(>|t|)"]
+
+# Créer un dataframe pour le plot
+results_df <- data.frame(
+  Coefficient = c("mccc_SectorConsumer.Discretionary",
+                  "mccc_SectorConsumer.Staples",
+                  "mccc_SectorEnergy",
+                  "mccc_SectorFinancials",
+                  "mccc_SectorHealth.Care",
+                  "mccc_SectorIndustrials",
+                  "mccc_SectorInformation.Technology",
+                  "mccc_SectorMaterials",
+                  "mccc_SectorReal.Estate",
+                  "mccc_SectorUtilities",
+                  
+                  "post_PA_mccc_SectorConsumer.Discretionary",
+                  "post_PA_mccc_SectorConsumer.Staples",
+                  "post_PA_mccc_SectorEnergy",
+                  "post_PA_mccc_SectorFinancials",
+                  "post_PA_mccc_SectorHealth.Care",
+                  "post_PA_mccc_SectorIndustrials",
+                  "post_PA_mccc_SectorInformation.Technology",
+                  "post_PA_mccc_SectorMaterials",
+                  "post_PA_mccc_SectorReal.Estate",
+                  "post_PA_mccc_SectorUtilities"),
+  Estimated_Value = coefficients,
+  Pvalue = pvalues
+)
+results_df
+
+data_metrics <- extract_metrics(model)
+data_metrics
+
+results_df$Period <- ifelse(grepl("post_PA",results_df$Coefficient, fixed = TRUE),
+                            "After PA","Before PA")
+
+results_df$Period  <- factor(results_df$Period, levels = c("Before PA", "After PA"))
+
+
+save(results_df,file =  "figures/estimation/coeff_pan_paris_mccc_sect.RData")
+save(data_metrics,file =  "figures/estimation/metrics_pan_paris_mccc_sect.RData")
+
+unique_sector <- unique(pdata$Sector)
+unique_sector <- gsub(" ", ".", unique_sector)
+results_df$Secteur <- sapply(results_df$Coefficient, function(coef) {
+  secteur <- "F"
+  for (x in unique_sector) {
+    if (grepl(x, coef, fixed = TRUE)) {
+      secteur <- x
+      break
+    }
+  }
+  return(secteur)
+})
+
+
+# Tracé des résultats par secteur
+graphique <- ggplot(results_df, aes(x = Secteur, y = Estimated_Value, fill = Pvalue <= 0.1)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  facet_wrap(~ Period, scales = "free_y") +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur", 
+       y = "Coefficient estimé",
+       title = "Coefficients des Modèles PLM par Secteur",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+graphique
+
+ggsave("figures/img/pan_paris_ccai_sect.png", plot = graphique, width = 10, height = 7)
+
+
+#----------------------------------------#
+#            PANEL PAR SECTOR            #
+#----------------------------------------#
+
+unique_sector <- unique(data_sharesinfo$Sector)
+results_by_sector <- list()
+models_by_sector <- list()
+
+# Construction dynamique de la formule
+predictor <- "mccc"
+# predictor <- "ccai"
+formula_str <- paste("r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + rmw_5_friday + cma_5_friday +",
+                     predictor)
+formula <- as.formula(formula_str)
+
+# Boucle pour chaque secteur
+for (sector in unique_sector) {
+  pdata_temp <- pdata.frame(X_panel[Sector == sector], index = c("ticker", "date"))
+  model <- plm(formula,
+               data = pdata_temp, model = "within",effect = "individual")
+  
+  coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
+  models_by_sector[[sector]] <- coef_test
+  
+  coefficients <- coef_test[predictor, "Estimate"]
+  p_values <- coef_test[predictor, "Pr(>|t|)"]
+  
+  data_metrics <- extract_metrics(model)
+  
+  
+  results_by_sector[[sector]] <- list(coefficients = coefficients,
+                                      p_values = p_values,
+                                      adj_r2 = data_metrics$Adjusted_R2,
+                                      f_stat = data_metrics$F_statistic)
+}
+
+# Résultats par secteur
+results_df <- data.frame(
+  Secteur = unique_sector,
+  Valeur = predictor,
+  Coefficient = sapply(results_by_sector, function(x) x$coefficients),
+  Pvalue = sapply(results_by_sector, function(x) x$p_values),
+  Adjusted_R2 = sapply(results_by_sector, function(x) x$adj_r2),
+  F_statistic = sapply(results_by_sector, function(x) x$f_stat)
+)
+
+save(results_df,file = "figures/estimation/metricscoeff_sub_sect_pan.RData")
+
+# Tracé des résultats par secteur
+graphique <- ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur", 
+       y = "Coefficient estimé",
+       title = "Coefficients des Modèles PLM par Secteur",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+
+ggsave("figures/img/sub_sect_pan.png", plot = graphique, width = 10, height = 7)
+
+# ### GLM ###
+# 
+# # Modèles GLM par secteur
+# results_by_sector <- list()
+# models_by_sector <- list()
+# 
+# formula_str <- paste("r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + rmw_5_friday + cma_5_friday +",
+#                      predictor)
+# formula <- as.formula(formula_str)
+# 
+# for (sector in unique_sector) {
+#   data_temp <- X_panel[X_panel$Sector == sector, ]
+# 
+#   model <- glm(formula,
+#                data = data_temp)
+# 
+#   robust_se_glm <- vcovHC(model, type = "HC1")
+#   coef_test <- coeftest(model, vcov = robust_se_glm)
+# 
+#   if (predictor %in% rownames(coef_test)) {
+#     coefficients <- coef_test[rownames(coef_test) == predictor, "Estimate"]
+#     p_values <- coef_test[rownames(coef_test) == predictor, "Pr(>|z|)"]
+#   } else {
+#     coefficients <- NA
+#     p_values <- NA
+#   }
+# 
+#   results_by_sector[[sector]] <- list(coefficients = coefficients, p_values = p_values)
+# }
+# 
+# results_df <- data.frame(
+#   Secteur = unique_sector,
+#   Valeur = predictor,
+#   Coefficient = sapply(results_by_sector, function(x) x$coefficients),
+#   Pvalue = sapply(results_by_sector, function(x) x$p_values)
+# )
+# 
+# ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
+#   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+#   scale_fill_manual(values = c("grey70", "steelblue"),
+#                     labels = c("P-value > 0.1", "P-value <= 0.1"),
+#                     name = "Significance") +
+#   labs(x = "Secteur",
+#        y = "Coefficient estimé",
+#        title = "Coefficients des Modèles GLM par Secteur",
+#        subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+#   theme_minimal(base_size = 14) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+#     plot.subtitle = element_text(hjust = 0.5, size = 12),
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+#     axis.text.y = element_text(size = 12),
+#     axis.title.x = element_text(size = 14, face = "bold"),
+#     axis.title.y = element_text(size = 14, face = "bold"),
+#     legend.position = "top",
+#     legend.title = element_text(size = 12),
+#     legend.text = element_text(size = 12)
+#   )
+
+
+
+
+#----------------------------------------#
+#      PANEL PAR INDUSTRYGROUP           #
+#----------------------------------------#
+
+unique_industrygroup <- unique(data_sharesinfo$IndustryGroup)
+results_by_industry <- list()
+models_by_industry <- list()
+
+# Boucle pour chaque groupe d'industrie
+for (industry in unique_industrygroup) {
+  pdata_temp <- pdata.frame(X_panel[IndustryGroup == industry], index = c("ticker", "date"))
+  
+  model <- plm(formula,
+               data = pdata_temp, model = "within",effect = "individual")
+  
+  coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
+  models_by_industry[[industry]] <- coef_test
+  
+  coefficients <- coef_test[predictor, "Estimate"]
+  p_values <- coef_test[predictor, "Pr(>|t|)"]
+  
+  results_by_industry[[industry]] <- list(coefficients = coefficients, p_values = p_values)
+}
+
+results_df <- data.frame(
+  Industrie = unique_industrygroup,
+  Valeur = predictor,
+  Coefficient = sapply(results_by_industry, function(x) x$coefficients),
+  Pvalue = sapply(results_by_industry, function(x) x$p_values)
+)
+
+graphique <- ggplot(results_df, aes(x = Industrie, y = Coefficient, fill = Pvalue <= 0.1)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur", 
+       y = "Coefficient estimé",
+       title = "Coefficients des Modèles PLM par Industrie",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+
+ggsave("figures/img/sub_industry_pan.png", plot = graphique, width = 10, height = 7)
+
+# # Modèles GLM par groupe d'industrie
+# results_by_industry <- list()
+# models_by_industry <- list()
+# 
+# for (industry in unique_industrygroup) {
+#   data_temp <- X_panel[X_panel$IndustryGroup == industry, ]
+#   
+#   model <- glm(formula,
+#                data = data_temp)
+#   
+#   robust_se_glm <- vcovHC(model, type = "HC1")
+#   coef_test <- coeftest(model, vcov = robust_se_glm)
+#   
+#   if (predictor %in% rownames(coef_test)) {
+#     coefficients <- coef_test[rownames(coef_test) == predictor, "Estimate"]
+#     p_values <- coef_test[rownames(coef_test) == predictor, "Pr(>|z|)"]
+#   } else {
+#     coefficients <- NA
+#     p_values <- NA
+#   }
+#   
+#   results_by_industry[[industry]] <- list(coefficients = coefficients, p_values = p_values)
+# }
+# 
+# results_df <- data.frame(
+#   Industrie = unique_industrygroup,
+#   Valeur = predictor,
+#   Coefficient = sapply(results_by_industry, function(x) x$coefficients),
+#   Pvalue = sapply(results_by_industry, function(x) x$p_values)
+# )
+# 
+# ggplot(results_df, aes(x = Industrie, y = Coefficient, fill = Pvalue <= 0.1)) +
+#   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+#   scale_fill_manual(values = c("grey70", "steelblue"), 
+#                     labels = c("P-value > 0.1", "P-value <= 0.1"),
+#                     name = "Significance") +
+#   labs(x = "Secteur", 
+#        y = "Coefficient estimé",
+#        title = "Coefficients des Modèles GLM par Industrie",
+#        subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+#   theme_minimal(base_size = 14) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+#     plot.subtitle = element_text(hjust = 0.5, size = 12),
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+#     axis.text.y = element_text(size = 12),
+#     axis.title.x = element_text(size = 14, face = "bold"),
+#     axis.title.y = element_text(size = 14, face = "bold"),
+#     legend.position = "top",
+#     legend.title = element_text(size = 12),
+#     legend.text = element_text(size = 12)
+#   )
+# 
+
+
+
+
+#----------------------------------------#
+#      PANEL PAR SubIndustry             #
+#----------------------------------------#
+
+unique_subindustry <- unique(data_sharesinfo$SubIndustry)
+results_by_subindustry <- list()
+models_by_subindustry <- list()
+
+# Boucle pour chaque groupe d'industrie
+for (subindustry in unique_subindustry) {
+  pdata_temp <- pdata.frame(X_panel[SubIndustry == subindustry], index = c("ticker", "date"))
+  
+  model <- plm(formula,
+               data = pdata_temp, model = "within",effect = "individual")
+  
+  coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
+  models_by_industry[[subindustry]] <- coef_test
+  
+  coefficients <- coef_test[predictor, "Estimate"]
+  p_values <- coef_test[predictor, "Pr(>|t|)"]
+  
+  results_by_subindustry[[subindustry]] <- list(coefficients = coefficients, p_values = p_values)
+}
+
+results_df <- data.frame(
+  SubIndustry = unique_subindustry,
+  Valeur = predictor,
+  Coefficient = sapply(results_by_subindustry, function(x) x$coefficients),
+  Pvalue = sapply(results_by_subindustry, function(x) x$p_values)
+)
+
+graphique <- ggplot(results_df, aes(x = SubIndustry, y = Coefficient, fill = Pvalue <= 0.1)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur", 
+       y = "Coefficient estimé",
+       title = "Coefficients des Modèles PLM par SubIndustry",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+ggsave("figures/img/sub_subindustry_pan.png", plot = graphique, width = 10, height = 7)
+
+# # Modèles GLM par groupe d'industrie
+# results_by_subindustry <- list()
+# models_by_subindustry <- list()
+# 
+# for (subindustry in unique_subindustry) {
+#   data_temp <- X_panel[X_panel$SubIndustry == subindustry, ]
+#   
+#   # Vérification des données pour chaque sous-industrie
+#   if (nrow(data_temp) < 50 || all(data_temp[[predictor]] == data_temp[[predictor]][1])) {
+#     cat("Sous-industrie", subindustry, ": Pas assez de données ou pas de variabilité\n")
+#     coefficients <- NA
+#     p_values <- NA
+#   } else {
+#     model <- tryCatch({
+#       glm(formula, data = data_temp)
+#     }, error = function(e) {
+#       cat("Erreur de convergence pour la sous-industrie", subindustry, "\n")
+#       return(NULL)
+#     })
+#     
+#     if (is.null(model)) {
+#       coefficients <- NA
+#       p_values <- NA
+#     } else {
+#       robust_se_glm <- vcovHC(model, type = "HC1")
+#       coef_test <- coeftest(model, vcov = robust_se_glm)
+#       
+#       if (predictor %in% rownames(coef_test)) {
+#         coefficients <- coef_test[rownames(coef_test) == predictor, "Estimate"]
+#         p_values <- coef_test[rownames(coef_test) == predictor, "Pr(>|z|)"]
+#       } else {
+#         coefficients <- NA
+#         p_values <- NA
+#       }
+#     }
+#   }
+#   
+#   results_by_subindustry[[subindustry]] <- list(coefficients = coefficients, p_values = p_values)
+# }
+# 
+# results_df <- data.frame(
+#   SubIndustry = unique_subindustry,
+#   Valeur = predictor,
+#   Coefficient = sapply(results_by_subindustry, function(x) x$coefficients),
+#   Pvalue = sapply(results_by_subindustry, function(x) x$p_values)
+# )
+# 
+# 
+# ggplot(results_df, aes(x = SubIndustry, y = Coefficient, fill = Pvalue <= 0.1)) +
+#   geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+#   scale_fill_manual(values = c("grey70", "steelblue"), 
+#                     labels = c("P-value > 0.1", "P-value <= 0.1"),
+#                     name = "Significance") +
+#   labs(x = "Secteur", 
+#        y = "Coefficient estimé",
+#        title = "Coefficients des Modèles GLM par Industrie",
+#        subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+#   theme_minimal(base_size = 14) +
+#   theme(
+#     plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+#     plot.subtitle = element_text(hjust = 0.5, size = 12),
+#     axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+#     axis.text.y = element_text(size = 12),
+#     axis.title.x = element_text(size = 14, face = "bold"),
+#     axis.title.y = element_text(size = 14, face = "bold"),
+#     legend.position = "top",
+#     legend.title = element_text(size = 12),
+#     legend.text = element_text(size = 12)
+#   )
+# 
+
+#----------------------------------------#
+#      ROBUSTESSE DES APPROCHES          #
+#----------------------------------------#
+
+### Variation des plages temporelles    ###
+
+# Initialisation des listes pour stocker les résultats
+results_by_sector_and_period <- list()
+models_by_sector_and_period <- list()
+predictor <- "mccc"  # Nom du prédicteur principal
+
+# Définition des différentes plages temporelles de 5 ans
+time_periods <- list(
+  period1 = c("2008-03-07", "2013-03-06"),
+  period2 = c("2013-03-07", "2018-03-06"),
+  period3 = c("2018-03-07", "2023-03-06"),
+  period4 = c("2023-03-07", "2024-02-23")
+)
+
+# Initialisation des vecteurs pour stocker les résultats
+secteurs <- c()
+periodes <- c()
+coefficients <- c()
+p_values <- c()
+significativite <- c()
+
+# Boucle pour chaque secteur et période
+for (sector in unique_sector) {
+  # Filtrer les données pour le secteur actuel
+  pdata_temp <- pdata.frame(X_panel[X_panel$Sector == sector], index = c("ticker", "date"))
+  pdata_temp$date <- as.Date(pdata_temp$date)
+  
+  for (period_name in names(time_periods)) {
+    # Filtrer les données pour la période actuelle
+    period <- time_periods[[period_name]]
+    pdata_temp_period <- pdata_temp[pdata_temp$date >= as.Date(period[1]) & pdata_temp$date <= as.Date(period[2]), ]
+    
+    if (nrow(pdata_temp_period) > 0) {
+      # Ajuster le modèle de régression pour la période actuelle
+      model <- plm(formula,
+                   data = pdata_temp_period, model = "within",effect = "individual")
+      
+      # Tester les coefficients avec une covariance robuste
+      coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
+      
+      # Sauvegarder le modèle et les résultats des tests de coefficients
+      models_by_sector_and_period[[paste(sector, period_name, sep = "_")]] <- coef_test
+      
+      # Extraire le coefficient et la p-value pour le prédicteur d'innovation
+      coefficient <- coef_test[predictor, "Estimate"]
+      p_value <- coef_test[predictor, "Pr(>|t|)"]
+      
+      # Stocker les résultats dans les vecteurs
+      secteurs <- c(secteurs, sector)
+      periodes <- c(periodes, period_name)
+      coefficients <- c(coefficients, coefficient)
+      p_values <- c(p_values, p_value)
+      significativite <- c(significativite, p_value <= 0.1)
+    }
+  }
+}
+
+# Créer un DataFrame pour résumer les résultats
+results_df <- data.frame(
+  Secteur = secteurs,
+  Période = periodes,
+  Coefficient = coefficients,
+  Pvalue = p_values,
+  Significatif = significativite
+)
+
+print(results_df)  # Afficher les résultats
+
+# Préparation des labels pour les périodes dans le graphique
+period_labels <- data.frame(
+  Période = unique(results_df$Période),
+  x = seq(2, length(unique(interaction(results_df$Secteur, results_df$Période))),
+          by = length(unique(results_df$Secteur))),
+  y = max(results_df$Coefficient) * 1.1
+)
+
+# Création du graphique pour visualiser les coefficients
+ggplot(results_df, aes(x = interaction(Secteur, Période), y = Coefficient, fill = Significatif)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur et Période", 
+       y = "Coefficient estimé",
+       title = "Coefficients des Modèles PLM par Secteur et Période",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_vline(xintercept = seq(1.5, length(unique(interaction(results_df$Secteur, results_df$Période))) - 0.5,
+                              by = length(unique(results_df$Secteur))), linetype = "dashed", color = "black") +
+  geom_text(data = period_labels, aes(x = x, y = y, label = Période),
+            angle = 0, hjust = 0.5, size = 5, inherit.aes = FALSE)
+
+
+###      Comparaison des modèles FF à 3 et 5 facteurs       ###
+
+# Initialisation des vecteurs pour stocker les résultats
+secteurs <- c()
+coefficients_3f <- c()
+coefficients_5f <- c()
+p_values_3f <- c()
+p_values_5f <- c()
+significativite_3f <- c()
+significativite_5f <- c()
+
+# Boucle pour chaque secteur
+for (sector in unique_sector) {
+  # Filtrer les données pour le secteur actuel
+  pdata_temp <- pdata.frame(X_panel[X_panel$Sector == sector], index = c("ticker", "date"))
+  
+  # Ajuster les modèles à 3 et 5 facteurs
+  model_3f <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + mccc,
+                  data = pdata_temp, model = "within",effect = "individual")
+  
+  model_5f <- plm(r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + rmw_5_friday + cma_5_friday + mccc,
+                  data = pdata_temp, model = "within",effect = "individual")
+  
+  # Tester les coefficients avec une covariance robuste
+  coef_test_3f <- coeftest(model_3f, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
+  coef_test_5f <- coeftest(model_5f, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
+  
+  # Extraire les coefficients et les p-values pour le prédicteur d'innovation
+  coefficient_3f <- coef_test_3f[predictor, "Estimate"]
+  coefficient_5f <- coef_test_5f[predictor, "Estimate"]
+  p_value_3f <- coef_test_3f[predictor, "Pr(>|t|)"]
+  p_value_5f <- coef_test_5f[predictor, "Pr(>|t|)"]
+  
+  # Stocker les résultats dans les vecteurs
+  secteurs <- c(secteurs, sector)
+  coefficients_3f <- c(coefficients_3f, coefficient_3f)
+  coefficients_5f <- c(coefficients_5f, coefficient_5f)
+  p_values_3f <- c(p_values_3f, p_value_3f)
+  p_values_5f <- c(p_values_5f, p_value_5f)
+  significativite_3f <- c(significativite_3f, p_value_3f <= 0.1)
+  significativite_5f <- c(significativite_5f, p_value_5f <= 0.1)
+}
+
+# Créer un DataFrame pour résumer les résultats de la comparaison
+results_comparison_df <- data.frame(
+  Secteur = secteurs,
+  Coefficient_3F = coefficients_3f,
+  Coefficient_5F = coefficients_5f,
+  Pvalue_3F = p_values_3f,
+  Pvalue_5F = p_values_5f,
+  Significatif_3F = significativite_3f,
+  Significatif_5F = significativite_5f
+)
+
+print(results_comparison_df)  # Afficher les résultats
+
+# Transformation des données pour la visualisation
+results_comparison_melted <- melt(results_comparison_df, id.vars = "Secteur",
+                                  measure.vars = c("Coefficient_3F", "Coefficient_5F"),
+                                  variable.name = "Modèle",
+                                  value.name = "Coefficient")
+
+results_comparison_pvalue_melted <- melt(results_comparison_df, id.vars = "Secteur",
+                                         measure.vars = c("Pvalue_3F", "Pvalue_5F"),
+                                         variable.name = "Modèle",
+                                         value.name = "Pvalue")
+
+results_comparison_melted$Pvalue <- results_comparison_pvalue_melted$Pvalue
+results_comparison_melted$Significatif <- results_comparison_melted$Pvalue <= 0.1
+
+# Création du graphique pour comparer les coefficients des deux modèles
+ggplot(results_comparison_melted, aes(x = Secteur, y = Coefficient, fill = Significatif)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  facet_wrap(~ Modèle, scales = "free_y") +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur", 
+       y = "Coefficient estimé",
+       title = "Comparaison des Coefficients des Modèles PLM à 3 Facteurs et 5 Facteurs par Secteur",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+
+#----------------------------------------#
+#          Détection de break            #
+#----------------------------------------#
+
+# mccc
+data_temp <- copy(data_variables[,.(date,ccai)])
+data_temp$date <- as.Date(data_temp$date)
+
+# Création d'une série temporelle zoo
+zoo_ccai_ar <- zoo(data_temp$ccai, order.by = data_temp$date)
+
+summary(ur.za(zoo_ccai_ar, model="both",lag=1))
+
+zoo_ccai_ar[696]
+
+plot(ur.za(zoo_ccai_ar, model="both",lag=1))
+
+# Affichage de la série temporelle
+plot(zoo_ccai_ar, main = "Série temporelle de mccc (fréquence hebdomadaire)",
+     xlab = "Date", ylab = "mccc")
+abline(v = index(zoo_ccai_ar)[696], col = "red", lwd = 1)
+
+## Test au niveau du break de la significativité
+
+# Extraire les secteurs uniques
+unique_sector <- unique(pdata$Sector)
+
+# Initialiser les listes pour stocker les résultats
+results_by_sector <- list()
+models_by_sector <- list()
+
+# Formuler le modèle
+model_formula <- r_rf ~ mkt_rf_3_weekly + smb_3_weekly + hml_3_weekly + 
+  rmw_5_friday + cma_5_friday + mccc +
+  post_break_mkt_rf_3_weekly + post_break_smb_3_weekly + post_break_hml_3_weekly +
+  post_break_rmw_5_friday + post_break_cma_5_friday + post_break_mccc
+
+# Boucle pour chaque secteur
+for (sector in unique_sector) {
+  # Filtrer les données pour le secteur actuel
+  pdata_temp <- pdata[pdata$Sector == sector,]
+  
+  # Ajuster le modèle avec effets fixes individuels
+  model <- plm(model_formula, data = pdata_temp, model = "within", effect = "individual")
+  
+  # Obtenir les résultats des tests des coefficients
+  coef_test <- coeftest(model, vcov = function(x) vcovHC(x, type = "HC1", maxlag = 7))
+  
+  # Stocker les résultats dans les listes
+  models_by_sector[[sector]] <- coef_test
+  
+  # Extraire les coefficients avant et après les accords de Paris
+  coefficients_before <- coef_test["mccc", "Estimate"]
+  coefficients_after <- coef_test["post_break_mccc", "Estimate"]
+  p_values_before <- coef_test["mccc", "Pr(>|t|)"]
+  p_values_after <- coef_test["post_break_mccc", "Pr(>|t|)"]
+  
+  results_by_sector[[sector]] <- list(
+    coefficients_before = coefficients_before,
+    coefficients_after = coefficients_after,
+    p_values_before = p_values_before,
+    p_values_after = p_values_after
+  )
+}
+
+# Créer un data frame avec les résultats
+results_df <- data.frame(
+  Secteur = rep(unique_sector, each = 2),
+  Period = rep(c("Before Break", "After Break"), times = length(unique_sector)),
+  Coefficient = unlist(lapply(results_by_sector, function(x) c(x$coefficients_before, x$coefficients_after))),
+  Pvalue = unlist(lapply(results_by_sector, function(x) c(x$p_values_before, x$p_values_after)))
+)
+
+# Modifier l'ordre des niveaux de la variable Period
+results_df$Period <- factor(results_df$Period, levels = c("Before Break", "After Break"))
+
+# Tracé des résultats par secteur
+graphique <- ggplot(results_df, aes(x = Secteur, y = Coefficient, fill = Pvalue <= 0.1)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  facet_wrap(~ Period, scales = "free_y") +
+  scale_fill_manual(values = c("grey70", "steelblue"), 
+                    labels = c("P-value > 0.1", "P-value <= 0.1"),
+                    name = "Significance") +
+  labs(x = "Secteur", 
+       y = "Coefficient estimé",
+       title = "Coefficients des Modèles PLM par Secteur avant et après le break déterminé",
+       subtitle = "Avec indication de la significativité (P-value < 0.1)") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.position = "top",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+
+graphique
