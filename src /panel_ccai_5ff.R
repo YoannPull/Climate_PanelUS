@@ -109,7 +109,7 @@ points(optimal_lag, aic_values[optimal_lag], col = "red", pch = 19)
 text(optimal_lag, aic_values[optimal_lag], labels = paste("Optimal Lag:",
                                                           optimal_lag), pos = 3, col = "red")
 
-# Modèle AR(7) et résidus
+# Modèle AR(2) et résidus
 model <- arima(ts_ccai_diff, order = c(2, 0, 0))
 residuals <- residuals(model)
 print(residuals)

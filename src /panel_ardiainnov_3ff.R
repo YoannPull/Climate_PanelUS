@@ -75,10 +75,10 @@ summary(kpss_test)
 # Ajout de l'indice MCCC de Ardia dans le data frame data_variables
 data_variables$mccc <- data_mccc$mccc
 
-# Création de la série temporelle des résidus de MCCC
+# Création de la série temporelle des résidus d'un AR(1) avec MCCC
 ts_mccc <- ts(data_variables$mccc, frequency = 1)
 
-model <- arima(ts_mccc, order = c(2, 0, 0))
+model <- arima(ts_mccc, order = c(1, 0, 0))
 residuals <- residuals(model)
 
 # plot(residuals, type = "l", col = "blue", xlab = "Time", ylab = "Residuals",
